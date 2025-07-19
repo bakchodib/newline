@@ -87,9 +87,9 @@ export default function LoginPage() {
           <CardContent className="space-y-4">
              <Alert>
               <Info className="h-4 w-4" />
-              <AlertTitle>Demo Credentials</AlertTitle>
+              <AlertTitle>Having Trouble?</AlertTitle>
               <AlertDescription>
-                Use <strong>admin@jls.com</strong> / <strong>password</strong> to log in.
+                If login fails, please use the <strong>Sign up</strong> link below to create a new account.
               </AlertDescription>
             </Alert>
             <div className="space-y-2">

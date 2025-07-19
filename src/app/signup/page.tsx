@@ -50,20 +50,23 @@ export default function SignupPage() {
 
       if (!user) throw new Error("Signup failed, no user returned.");
       
-      // 2. Create user profile in Firestore
+      // 2. Create user profile in Firestore.
+      // For a new public signup, we'll assign the 'agent' role by default
+      // so they can access the main dashboard features.
       const userProfile = {
         name: name,
         loginId: email,
-        role: 'customer', // Default role for public signups
+        role: 'agent', 
       };
       
       await setDoc(doc(db, "users", user.uid), userProfile);
 
       toast({
-        title: "Signup Successful",
-        description: "Your account has been created. Please log in.",
+        title: "Account Created & Logged In",
+        description: "Welcome! You have been automatically logged in.",
       });
-      router.push("/login");
+      // Instead of redirecting to login, we are already logged in, so go to the dashboard.
+      router.push("/dashboard");
 
     } catch (error: any) {
         console.error("Signup failed:", error);
@@ -135,7 +138,7 @@ export default function SignupPage() {
                   placeholder="••••••••"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => setPassword(e.g.target.value)}
                   className="pl-10"
                   disabled={isLoading}
                 />
@@ -144,7 +147,7 @@ export default function SignupPage() {
           </CardContent>
           <CardFooter className="flex-col gap-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? <><Loader2 className="animate-spin" /> Signing up...</> : 'Sign Up'}
+              {isLoading ? <><Loader2 className="animate-spin" /> Signing up...</> : 'Sign Up & Log In'}
             </Button>
             <p className="text-sm text-muted-foreground">
                 Already have an account?{" "}
