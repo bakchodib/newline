@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { HandCoins, Eye, Edit, CalendarIcon, Loader2 } from 'lucide-react';
+import { HandCoins, Eye, Edit, CalendarIcon, Loader2, PlusCircle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
 
 import { LoanDocuments } from "@/components/loan-documents";
@@ -21,21 +21,27 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
-import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from '@/components/ui/table';
 import type { Customer } from '@/app/dashboard/customers/page';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import type { LoanApplication } from '@/app/dashboard/loans/applications/page';
 
 
 const loanSchema = z.object({
@@ -49,6 +55,121 @@ const loanSchema = z.object({
 });
 
 export type Loan = z.infer<typeof loanSchema>;
+
+type Emi = {
+  id: string;
+  loanId: string;
+  installment: number;
+  dueDate: string;
+  amount: number;
+  status: 'paid' | 'unpaid';
+};
+
+
+const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: string}, customer: Customer, onLoanUpdated: () => void }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const { toast } = useToast();
+    const [amount, setAmount] = useState(0);
+
+    const handleSubmit = () => {
+        if (amount <= 0) {
+            toast({ variant: 'destructive', title: "Invalid Amount", description: "Top-up amount must be greater than zero." });
+            return;
+        }
+
+        const newApplication: LoanApplication = {
+            id: `APP-${Date.now()}`,
+            customerId: loan.customerId,
+            amount: amount,
+            status: 'pending',
+            applicationDate: new Date(),
+        };
+
+        const existingApps = JSON.parse(localStorage.getItem('jls_pending_loans') || '[]');
+        localStorage.setItem('jls_pending_loans', JSON.stringify([...existingApps, newApplication]));
+        
+        toast({ title: "Top-up Application Submitted", description: `A new loan application for ${customer.name} has been created.` });
+        setIsOpen(false);
+        onLoanUpdated();
+    };
+
+    return (
+        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+                <Button variant="ghost" size="icon">
+                    <PlusCircle className="h-4 w-4 text-green-600" />
+                </Button>
+            </DialogTrigger>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Loan Top-up for {customer.name}</DialogTitle>
+                    <DialogDescription>
+                        Enter the additional amount for the new loan. This will create a new application that needs to go through the approval process.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                    <Label htmlFor="topup-amount">Top-up Amount (Rs.)</Label>
+                    <Input id="topup-amount" type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
+                </div>
+                <DialogFooter>
+                    <Button onClick={handleSubmit}>Submit Application</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
+    )
+};
+
+
+const EarlyCloseDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, onLoanUpdated: () => void }) => {
+    const { toast } = useToast();
+    const [outstandingAmount, setOutstandingAmount] = useState(0);
+
+    const calculateOutstanding = () => {
+        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+        const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
+        const totalOutstanding = unpaidEmis.reduce((sum, emi) => sum + emi.amount, 0);
+        setOutstandingAmount(totalOutstanding);
+    };
+
+    const handleEarlyClose = () => {
+        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+        const updatedEmis = allEmis.map(emi => {
+            if (emi.loanId === loan.id && emi.status === 'unpaid') {
+                return { ...emi, status: 'paid' as const };
+            }
+            return emi;
+        });
+
+        localStorage.setItem('jls_emis', JSON.stringify(updatedEmis));
+        toast({ title: "Loan Closed", description: `Loan ${loan.id} has been marked as early closed.` });
+        onLoanUpdated();
+    };
+
+    return (
+        <AlertDialog onOpenChange={(open) => { if(open) calculateOutstanding() }}>
+            <AlertDialogTrigger asChild>
+                 <Button variant="ghost" size="icon">
+                    <XCircle className="h-4 w-4 text-red-600" />
+                </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>Confirm Early Closure</AlertDialogTitle>
+                    <AlertDialogDescription>
+                        Are you sure you want to close this loan? The total outstanding amount is 
+                        <strong className="text-foreground"> Rs. {outstandingAmount.toLocaleString()}</strong>. This action will mark all remaining EMIs as paid and cannot be undone.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={handleEarlyClose} className="bg-destructive hover:bg-destructive/90">
+                        Confirm & Close Loan
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+    );
+};
 
 
 const EditLoanDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, onLoanUpdated: () => void }) => {
@@ -189,11 +310,27 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                 <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
                                 <TableCell className="text-center">
                                     {customer && (
-                                        <div className="flex justify-center items-center gap-1">
-                                           <LoanDetailsView loan={loan} customer={customer} />
-                                           <EditLoanDialog loan={loan} onLoanUpdated={onLoanUpdated} />
-                                           <LoanDocuments customer={customer} loan={loan} />
-                                        </div>
+                                        <TooltipProvider>
+                                            <div className="flex justify-center items-center gap-1">
+                                               <Tooltip>
+                                                   <TooltipTrigger asChild><LoanDetailsView loan={loan} customer={customer} /></TooltipTrigger>
+                                                   <TooltipContent><p>View Details</p></TooltipContent>
+                                               </Tooltip>
+                                               <Tooltip>
+                                                    <TooltipTrigger asChild><EditLoanDialog loan={loan} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipContent><p>Edit Loan</p></TooltipContent>
+                                               </Tooltip>
+                                               <Tooltip>
+                                                    <TooltipTrigger asChild><LoanTopUpDialog loan={loan} customer={customer} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipContent><p>Loan Top-up</p></TooltipContent>
+                                               </Tooltip>
+                                               <Tooltip>
+                                                    <TooltipTrigger asChild><EarlyCloseDialog loan={loan} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipContent><p>Early Close</p></TooltipContent>
+                                               </Tooltip>
+                                               <LoanDocuments customer={customer} loan={loan} />
+                                            </div>
+                                        </TooltipProvider>
                                     )}
                                 </TableCell>
                             </TableRow>
@@ -242,3 +379,5 @@ export default function AllLoansPage() {
         </div>
     );
 }
+
+    
