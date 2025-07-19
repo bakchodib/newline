@@ -85,6 +85,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
             const emiSchedule = generateEmiSchedule(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
+            const netDisbursedAmount = loan.amount - (loan.processingFee || 0);
 
             // Header
             doc.setFont('helvetica', 'bold');
@@ -118,17 +119,20 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text("Loan Details", 20, 95);
             doc.setFont('helvetica', 'normal');
             doc.text(`Loan ID: ${loan.id}`, 20, 103);
-            doc.text(`Loan Amount: Rs. ${loan.amount.toLocaleString()}`, 20, 109);
-            doc.text(`Processing Fee (5%): Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 90, 109);
-            doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 115);
-            doc.text(`Tenure: ${loan.tenure} months`, 20, 121);
-            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, 127);
+            doc.text(`Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, 109);
+            doc.text(`Processing Fee (5%): Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 20, 115);
+            doc.setFont('helvetica', 'bold');
+            doc.text(`Net Disbursed Amount: Rs. ${netDisbursedAmount.toLocaleString()}`, 20, 121);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 127);
+            doc.text(`Tenure: ${loan.tenure} months`, 20, 133);
+            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, 139);
             
             // EMI Schedule Table
             doc.setFont('helvetica', 'bold');
-            doc.text("EMI Schedule", 20, 140);
+            doc.text("EMI Schedule", 20, 152);
             doc.autoTable({
-                startY: 145,
+                startY: 157,
                 head: [['Month', 'Due Date', 'EMI Amount (Rs.)', 'Principal', 'Interest', 'Balance']],
                 body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance]),
                 theme: 'grid',
