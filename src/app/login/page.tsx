@@ -5,7 +5,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AtSign, Lock, LogIn } from "lucide-react";
 import { collection, query, where, getDocs } from "firebase/firestore";
-import { db } from "@/lib/firebase";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { db, auth } from "@/lib/firebase";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -48,40 +49,51 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
+        // Step 1: Authenticate with Firebase Auth
+        const userCredential = await signInWithEmailAndPassword(auth, loginId, password);
+        const firebaseUser = userCredential.user;
+
+        if (!firebaseUser) {
+            throw new Error("Authentication failed.");
+        }
+        
+        // Step 2: Fetch user profile from Firestore
         const usersRef = collection(db, "users");
         const q = query(usersRef, where("loginId", "==", loginId));
         const querySnapshot = await getDocs(q);
 
         if (querySnapshot.empty) {
-            throw new Error("Invalid credentials");
+            throw new Error("User profile not found in database.");
         }
 
         const userDoc = querySnapshot.docs[0];
         const user = userDoc.data();
 
-        if (user && user.password === password) {
-            toast({
-            title: "Login Successful",
-            description: `Welcome back, ${user.name}!`,
-            });
-            // Store user session info
-            const userData = {
-                id: userDoc.id,
-                loginId: user.loginId,
-                name: user.name,
-                role: user.role,
-            };
-            localStorage.setItem("jls_user", JSON.stringify(userData));
-            router.push("/dashboard");
-        } else {
-            throw new Error("Invalid credentials");
-        }
-    } catch (error) {
+        toast({
+        title: "Login Successful",
+        description: `Welcome back, ${user.name}!`,
+        });
+        
+        // Store user session info
+        const userData = {
+            id: userDoc.id,
+            loginId: user.loginId,
+            name: user.name,
+            role: user.role,
+        };
+        localStorage.setItem("jls_user", JSON.stringify(userData));
+        router.push("/dashboard");
+
+    } catch (error: any) {
         console.error("Login failed:", error);
+        let description = "Invalid credentials. Please try again.";
+        if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+            description = "Invalid email or password.";
+        }
         toast({
             variant: "destructive",
             title: "Login Failed",
-            description: "Invalid credentials. Please try again.",
+            description: description,
         });
     } finally {
         setIsLoading(false);
@@ -99,20 +111,19 @@ export default function LoginPage() {
             Welcome Back
           </CardTitle>
           <CardDescription>
-            Log in to your JLS Finance account.
-            Customers can log in with their registered phone number.
+            Log in to your JLS Finance account. Login ID must be an email.
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email or Phone Number</Label>
+              <Label htmlFor="email">Email</Label>
               <div className="relative flex items-center">
                 <AtSign className="absolute left-3 h-5 w-5 text-muted-foreground" />
                 <Input
                   id="email"
-                  type="text"
-                  placeholder="e.g., admin@jls.com or +919876543210"
+                  type="email"
+                  placeholder="e.g., admin@jls.com"
                   required
                   value={loginId}
                   onChange={(e) => setLoginId(e.target.value)}

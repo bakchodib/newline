@@ -7,7 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PlusCircle, Trash2 } from 'lucide-react';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { db, auth } from '@/lib/firebase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -52,7 +53,7 @@ import {
 
 const userSchema = z.object({
   name: z.string().min(3, "Name is required."),
-  loginId: z.string().min(5, "Login ID is required (email or phone)."),
+  loginId: z.string().email("Please enter a valid email address for the Login ID."),
   password: z.string().min(6, "Password must be at least 6 characters."),
   role: z.enum(['admin', 'agent', 'customer']),
 });
@@ -68,23 +69,29 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 
   const onSubmit = async (data: z.infer<typeof userSchema>) => {
     try {
-      // Check if user already exists
-      const q = query(collection(db, "users"), where("loginId", "==", data.loginId));
-      const querySnapshot = await getDocs(q);
-      if (!querySnapshot.empty) {
-        toast({ variant: 'destructive', title: "Error", description: "A user with this Login ID already exists." });
-        return;
+      // Step 1: Create user in Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(auth, data.loginId, data.password);
+      const firebaseUser = userCredential.user;
+
+      if (!firebaseUser) {
+        throw new Error("Firebase Auth user creation failed.");
       }
 
-      await addDoc(collection(db, "users"), data);
+      // Step 2: Save user profile to Firestore, but without the password
+      const { password, ...userData } = data;
+      await addDoc(collection(db, "users"), userData);
 
       toast({ title: "User Added", description: `User ${data.name} has been created.` });
       onUserAdded();
       reset();
       setIsOpen(false);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error adding user:", e);
-      toast({ variant: 'destructive', title: "Error", description: "Failed to add user." });
+      let description = "Failed to add user.";
+      if (e.code === 'auth/email-already-in-use') {
+        description = "This email address is already in use by another account.";
+      }
+      toast({ variant: 'destructive', title: "Error", description });
     }
   };
 
@@ -99,7 +106,7 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Add New User</DialogTitle>
-          <DialogDescription>Create a new account for an admin or agent.</DialogDescription>
+          <DialogDescription>Create a new account for an admin, agent or customer.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
@@ -108,8 +115,8 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
             {errors.name && <p className="text-destructive text-sm mt-1">{errors.name.message}</p>}
           </div>
           <div>
-            <Label htmlFor="loginId">Login ID (Email or Phone)</Label>
-            <Input id="loginId" {...register('loginId')} />
+            <Label htmlFor="loginId">Login ID (Email)</Label>
+            <Input id="loginId" {...register('loginId')} type="email" />
             {errors.loginId && <p className="text-destructive text-sm mt-1">{errors.loginId.message}</p>}
           </div>
           <div>
@@ -206,7 +213,7 @@ const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUs
                                         <AlertDialogHeader>
                                             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                                This action cannot be undone. This will permanently delete the user account.
+                                                This action cannot be undone. This will permanently delete the user account from both authentication and the database.
                                             </AlertDialogDescription>
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
@@ -247,13 +254,16 @@ export default function UserManagementPage() {
     }, [fetchUsers]);
 
     const handleUserDeleted = async (id: string) => {
+        // Note: Deleting a Firebase Auth user requires re-authentication or server-side logic (Cloud Function).
+        // This client-side delete will only remove the user from the Firestore database.
+        // For a full implementation, a backend function is recommended to delete the Auth user.
         try {
             await deleteDoc(doc(db, "users", id));
-            toast({ title: 'User Deleted', description: `User has been removed.`, variant: 'destructive' });
+            toast({ title: 'User Deleted', description: `User profile has been removed from the database.`, variant: 'destructive' });
             fetchUsers(); // Refresh the list
         } catch (e) {
              console.error("Error deleting user: ", e);
-             toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete user.' });
+             toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete user profile.' });
         }
     };
 
