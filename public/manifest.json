@@ -1,0 +1,21 @@
+{
+  "name": "JLS Finance PWA",
+  "short_name": "JLS Finance",
+  "description": "A Microfinance Progressive Web App for JLS FINANCE LTD.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F0F8FF",
+  "theme_color": "#3399FF",
+  "icons": [
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
