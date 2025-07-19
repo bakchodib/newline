@@ -1,34 +1,24 @@
+
 "use client";
 
 import React, { useEffect, useState } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Button } from './ui/button';
-import { Download, FileText, CreditCard, Loader2 } from 'lucide-react';
+import { FileText, CreditCard, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import type { Customer } from '@/app/dashboard/customers/page';
+import type { Loan } from '@/app/dashboard/loans/page';
 
-// Extend jsPDF with autoTable plugin
 interface jsPDFWithAutoTable extends jsPDF {
   autoTable: (options: any) => jsPDF;
 }
 
-// Sample data for demonstration
-const sampleLoanData = {
-    loanId: 'L-202407-001',
-    customer: {
-        id: 'C-101',
-        name: 'John Doe',
-        phone: '+1-555-123-4567',
-        address: '123 Main Street, Anytown, USA, 12345',
-        photo: 'https://placehold.co/150x150.png', // Placeholder URL
-    },
-    loan: {
-        amount: 50000,
-        interestRate: 12.5, // Annual
-        tenure: 12, // Months
-        disbursalDate: new Date(),
-    },
-};
+interface LoanDocumentsProps {
+    customer: Customer;
+    loan: Loan & { id: string };
+}
 
 const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
     const monthlyRate = annualRate / 12 / 100;
@@ -57,45 +47,47 @@ const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: n
 };
 
 
-export function LoanDocuments() {
+export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const { toast } = useToast();
     const [isGenerating, setIsGenerating] = useState(false);
     const [customerPhoto, setCustomerPhoto] = useState<string | null>(null);
 
+    // Using a placeholder photo for now.
+    const photoUrl = 'https://placehold.co/150x150.png';
+
     useEffect(() => {
-        // In a real app, this would be fetched when customer data is loaded
-        // For demo, storing and retrieving from localStorage
-        try {
-            let photo = localStorage.getItem('customer_photo');
-            if (!photo) {
-                // Fetch image and convert to base64 to avoid CORS issues in jsPDF
-                fetch(sampleLoanData.customer.photo)
-                    .then(response => response.blob())
-                    .then(blob => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                            const base64data = reader.result as string;
-                            localStorage.setItem('customer_photo', base64data);
-                            setCustomerPhoto(base64data);
-                        };
-                        reader.readAsDataURL(blob);
-                    });
-            } else {
-                 setCustomerPhoto(photo);
+        // Fetch and cache the placeholder photo in base64
+        const cachePhoto = async () => {
+             try {
+                let photo = localStorage.getItem('placeholder_photo');
+                if (!photo) {
+                    const response = await fetch(photoUrl);
+                    const blob = await response.blob();
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        const base64data = reader.result as string;
+                        localStorage.setItem('placeholder_photo', base64data);
+                        setCustomerPhoto(base64data);
+                    };
+                    reader.readAsDataURL(blob);
+                } else {
+                    setCustomerPhoto(photo);
+                }
+            } catch (error) {
+                console.error("Could not process customer photo:", error);
+                toast({
+                    variant: "destructive",
+                    title: "Photo Error",
+                    description: "Failed to load customer photo for PDF generation."
+                });
             }
-        } catch (error) {
-            console.error("Could not process customer photo:", error);
-            toast({
-                variant: "destructive",
-                title: "Photo Error",
-                description: "Failed to load customer photo for PDF generation."
-            });
-        }
+        };
+       cachePhoto();
     }, [toast]);
 
     const addWatermark = (doc: jsPDF) => {
-        const totalPages = doc.getNumberOfPages();
-        for (let i = 1; i <= totalPages; i++) {
+        const pageCount = (doc as any).internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
             doc.setPage(i);
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(220, 220, 220);
@@ -113,7 +105,7 @@ export function LoanDocuments() {
             toast({
                 variant: "destructive",
                 title: "Cannot Generate PDF",
-                description: "Customer photo is not available. Please try again."
+                description: "Customer photo is not available yet. Please try again shortly."
             });
             return;
         }
@@ -121,8 +113,7 @@ export function LoanDocuments() {
         setIsGenerating(true);
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
-            const { customer, loan, loanId } = sampleLoanData;
-            const emiSchedule = generateEmiSchedule(loan.amount, loan.interestRate, loan.tenure, loan.disbursalDate);
+            const emiSchedule = generateEmiSchedule(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
 
             // Header
             doc.setFont('helvetica', 'bold');
@@ -153,19 +144,19 @@ export function LoanDocuments() {
             doc.setFont('helvetica', 'bold');
             doc.text("Loan Details", 20, 95);
             doc.setFont('helvetica', 'normal');
-            doc.text(`Loan ID: ${loanId}`, 20, 103);
+            doc.text(`Loan ID: ${loan.id}`, 20, 103);
             doc.text(`Loan Amount: Rs. ${loan.amount.toLocaleString()}`, 20, 109);
             doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 115);
             doc.text(`Tenure: ${loan.tenure} months`, 20, 121);
-            doc.text(`Disbursal Date: ${loan.disbursalDate.toLocaleDateString()}`, 20, 127);
+            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, 127);
             
             // EMI Schedule Table
             doc.setFont('helvetica', 'bold');
             doc.text("EMI Schedule", 20, 140);
             doc.autoTable({
                 startY: 145,
-                head: [['Month', 'Due Date', 'EMI Amount (Rs.)']],
-                body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount]),
+                head: [['Month', 'Due Date', 'EMI Amount (Rs.)', 'Principal', 'Interest', 'Balance']],
+                body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance]),
                 theme: 'grid',
                 headStyles: { fillColor: [22, 163, 74] },
             });
@@ -173,12 +164,26 @@ export function LoanDocuments() {
             let finalY = (doc as any).lastAutoTable.finalY || 180;
 
             if(type === 'agreement'){
+                doc.addPage();
+                finalY = 20; // Reset Y position for new page
+                doc.setFontSize(12);
+                doc.setFont('helvetica', 'bold');
+                doc.text("Guarantor Details", 20, finalY);
+                doc.setFont('helvetica', 'normal');
+                doc.text(`Name: ${customer.guarantor.name}`, 20, finalY + 8);
+                doc.text(`Phone: ${customer.guarantor.phone}`, 20, finalY + 14);
+                doc.text(`Address: ${customer.guarantor.address}`, 20, finalY + 20);
+
+                finalY += 40;
                 doc.setFontSize(10);
-                doc.text("Terms and Conditions:", 20, finalY + 10);
+                doc.setFont('helvetica', 'bold');
+                doc.text("Terms and Conditions:", 20, finalY);
                 doc.setFont('helvetica', 'normal');
                 const terms = `1. The borrower agrees to repay the loan amount with interest as per the EMI schedule.\n2. Late payment will attract a penalty fee of 2% per month on the overdue amount.\n3. All disputes are subject to the jurisdiction of the Anytown courts.`;
-                doc.text(terms, 20, finalY + 16, { maxWidth: doc.internal.pageSize.getWidth() - 40 });
-                finalY += 30;
+                doc.text(terms, 20, finalY + 6, { maxWidth: doc.internal.pageSize.getWidth() - 40 });
+                finalY += 40;
+            } else {
+                 finalY += 10;
             }
             
             // Signature Section
@@ -213,26 +218,29 @@ export function LoanDocuments() {
     };
 
     return (
-        <div className="border-t pt-4 mt-4">
-             <h3 className="text-lg font-semibold mb-2">Generate Loan Documents</h3>
-             <p className="text-sm text-muted-foreground mb-4">
-                Click to generate and download the official loan documents for a sample customer.
-             </p>
-            <div className="flex flex-col sm:flex-row gap-4">
-                <Button onClick={() => generatePdf('agreement')} disabled={isGenerating || !customerPhoto} className="w-full sm:w-auto">
-                    {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-4 w-4" />}
-                    Generate Agreement
-                </Button>
-                <Button onClick={() => generatePdf('card')} disabled={isGenerating || !customerPhoto} variant="secondary" className="w-full sm:w-auto">
-                    {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-                    Generate Loan Card
-                </Button>
+        <TooltipProvider>
+            <div className="flex gap-1">
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button onClick={() => generatePdf('agreement')} disabled={isGenerating || !customerPhoto} variant="ghost" size="icon">
+                            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Generate Agreement</p>
+                    </TooltipContent>
+                </Tooltip>
+                 <Tooltip>
+                    <TooltipTrigger asChild>
+                       <Button onClick={() => generatePdf('card')} disabled={isGenerating || !customerPhoto} variant="ghost" size="icon">
+                            {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Generate Loan Card</p>
+                    </TooltipContent>
+                </Tooltip>
             </div>
-             {!customerPhoto && !isGenerating && (
-                <p className="text-sm text-amber-600 mt-4 flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" /> Preparing customer photo for documents...
-                </p>
-            )}
-        </div>
+        </TooltipProvider>
     );
 }

@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, HandCoins, CalendarIcon } from 'lucide-react';
+import { PlusCircle, HandCoins, CalendarIcon, FileText, CreditCard } from 'lucide-react';
 import { format } from 'date-fns';
 
 import { LoanDocuments } from "@/components/loan-documents";
@@ -41,15 +41,8 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import { cn } from '@/lib/utils';
+import type { Customer } from './../customers/page';
 
-// Define the schema for a customer and loan
-const customerSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  phone: z.string(),
-  address: z.string(),
-});
-type Customer = z.infer<typeof customerSchema>;
 
 const loanSchema = z.object({
   id: z.string().optional(),
@@ -60,7 +53,7 @@ const loanSchema = z.object({
   disbursalDate: z.date({ required_error: "Disbursal date is required." }),
 });
 
-type Loan = z.infer<typeof loanSchema>;
+export type Loan = z.infer<typeof loanSchema>;
 
 const DisburseLoanForm = ({ customers, onLoanAdded }: { customers: Customer[], onLoanAdded: (loan: Loan) => void }) => {
   const { toast } = useToast();
@@ -118,7 +111,7 @@ const DisburseLoanForm = ({ customers, onLoanAdded }: { customers: Customer[], o
                   </SelectTrigger>
                   <SelectContent>
                     {customers.length > 0 ? customers.map(c => (
-                      <SelectItem key={c.id} value={c.id}>{c.name} ({c.id})</SelectItem>
+                      <SelectItem key={c.id} value={c.id!}>{c.name} ({c.id})</SelectItem>
                     )) : <SelectItem value="no-customer" disabled>No customers found</SelectItem>}
                   </SelectContent>
                 </Select>
@@ -187,9 +180,8 @@ const DisburseLoanForm = ({ customers, onLoanAdded }: { customers: Customer[], o
 };
 
 const LoanList = ({ loans, customers }: { loans: (Loan & {id: string})[], customers: Customer[] }) => {
-    const getCustomerName = (customerId: string) => {
-        return customers.find(c => c.id === customerId)?.name || 'Unknown';
-    }
+    
+    const findCustomer = (customerId: string) => customers.find(c => c.id === customerId);
 
     if (loans.length === 0) {
         return (
@@ -209,22 +201,29 @@ const LoanList = ({ loans, customers }: { loans: (Loan & {id: string})[], custom
                         <TableHead>Loan ID</TableHead>
                         <TableHead>Customer</TableHead>
                         <TableHead>Amount</TableHead>
-                        <TableHead>Interest Rate</TableHead>
+                        <TableHead>Interest</TableHead>
                         <TableHead>Tenure</TableHead>
-                        <TableHead>Disbursal Date</TableHead>
+                        <TableHead>Date</TableHead>
+                        <TableHead className="text-center">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
-                    {loans.map((loan) => (
-                        <TableRow key={loan.id}>
-                            <TableCell className="font-medium">{loan.id}</TableCell>
-                            <TableCell>{getCustomerName(loan.customerId)}</TableCell>
-                            <TableCell>Rs. {loan.amount.toLocaleString()}</TableCell>
-                            <TableCell>{loan.interestRate}%</TableCell>
-                            <TableCell>{loan.tenure} months</TableCell>
-                            <TableCell>{format(new Date(loan.disbursalDate), "PPP")}</TableCell>
-                        </TableRow>
-                    ))}
+                    {loans.map((loan) => {
+                        const customer = findCustomer(loan.customerId);
+                        return (
+                            <TableRow key={loan.id}>
+                                <TableCell className="font-medium">{loan.id}</TableCell>
+                                <TableCell>{customer?.name || 'Unknown'}</TableCell>
+                                <TableCell>Rs. {loan.amount.toLocaleString()}</TableCell>
+                                <TableCell>{loan.interestRate}%</TableCell>
+                                <TableCell>{loan.tenure} m</TableCell>
+                                <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
+                                <TableCell className="text-center space-x-1">
+                                    {customer && <LoanDocuments customer={customer} loan={loan} />}
+                                </TableCell>
+                            </TableRow>
+                        )
+                    })}
                 </TableBody>
             </Table>
         </div>
@@ -236,10 +235,16 @@ export default function LoansPage() {
     const [loans, setLoans] = useState<(Loan & {id: string})[]>([]);
 
     useEffect(() => {
-        const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-        setCustomers(storedCustomers);
-        const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-        setLoans(storedLoans);
+        try {
+            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
+            setCustomers(storedCustomers);
+            const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
+            setLoans(storedLoans.map((l: Loan) => ({...l, disbursalDate: new Date(l.disbursalDate)})));
+        } catch (e) {
+            console.error("Failed to parse data from localStorage", e);
+            setCustomers([]);
+            setLoans([]);
+        }
     }, []);
 
     const handleLoanAdded = (loan: Loan) => {
@@ -258,15 +263,6 @@ export default function LoansPage() {
                 </CardHeader>
                 <CardContent>
                     <LoanList loans={loans} customers={customers} />
-                </CardContent>
-            </Card>
-             <Card>
-                <CardHeader>
-                    <CardTitle>Loan Documents</CardTitle>
-                    <CardDescription>Generate official loan documents for a sample customer.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                     <LoanDocuments />
                 </CardContent>
             </Card>
         </div>
