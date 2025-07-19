@@ -5,7 +5,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from 'next/link';
 import { AtSign, Lock, LogIn, Info } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { signInWithEmailAndPassword } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { useAuth } from "@/hooks/useAuth";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,6 +30,13 @@ export default function LoginPage() {
   const [email, setEmail] = useState("admin@jls.com");
   const [password, setPassword] = useState("password");
   const [isLoading, setIsLoading] = useState(false);
+  const { user, loading } = useAuth();
+  
+  // Redirect if user is already logged in
+  if (!loading && user) {
+    router.push('/dashboard');
+    return null; // Render nothing while redirecting
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -42,50 +51,19 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
-
-        if (error) throw error;
-        
-        if (data.user) {
-          // Fetch user profile from your 'users' table
-          const { data: userProfile, error: profileError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('authUid', data.user.id)
-            .single();
-          
-          if(profileError) throw new Error("Could not find user profile. Please contact admin.");
-          if(!userProfile) throw new Error("User profile not found.");
-
-          toast({
+        await signInWithEmailAndPassword(auth, email, password);
+        toast({
             title: "Login Successful",
-            description: `Welcome back, ${userProfile.name}!`,
-          });
-
-          // Store user session info
-          const userData = {
-              id: userProfile.id,
-              loginId: userProfile.loginId,
-              name: userProfile.name,
-              role: userProfile.role,
-              authUid: data.user.id,
-          };
-          localStorage.setItem("jls_user", JSON.stringify(userData));
-          router.push("/dashboard");
-
-        } else {
-            throw new Error("Login failed, no user data returned.");
-        }
+            description: `Welcome back!`,
+        });
+        router.push("/dashboard");
 
     } catch (error: any) {
         console.error("Login failed:", error);
         toast({
             variant: "destructive",
             title: "Login Failed",
-            description: error.message || "Invalid credentials. Please try again.",
+            description: error.code === 'auth/invalid-credential' ? "Invalid credentials. Please try again." : error.message,
         });
     } finally {
         setIsLoading(false);

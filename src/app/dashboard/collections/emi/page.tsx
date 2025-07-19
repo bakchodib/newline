@@ -9,15 +9,17 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Search, Receipt, Calendar } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { collection, getDocs, doc, updateDoc, Timestamp, where, query } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import type { Loan } from '@/app/dashboard/loans/all/page';
 import type { Customer } from '@/app/dashboard/customers/page';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type Emi = {
   id: string;
   loanId: string;
   installment: number;
-  dueDate: string;
+  dueDate: Timestamp;
   amount: number;
   status: 'paid' | 'unpaid';
 };
@@ -42,24 +44,42 @@ export default function EmiCollectionPage() {
     const [allEmis, setAllEmis] = useState<Emi[]>([]);
     const [filteredEmis, setFilteredEmis] = useState<Emi[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
-    const [loans, setLoans] = useState<(Loan & { id: string })[]>([]);
+    const [loans, setLoans] = useState<Loan[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const { toast } = useToast();
     const years = getYears();
+    const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
+    const fetchData = async () => {
+        setLoading(true);
         try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-            const storedEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-            setCustomers(storedCustomers);
-            setLoans(storedLoans);
-            setAllEmis(storedEmis);
+            const customersCollection = collection(db, 'customers');
+            const customerSnapshot = await getDocs(customersCollection);
+            const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customerList);
+
+            const loansCollection = collection(db, 'loans');
+            const loanSnapshot = await getDocs(loansCollection);
+            const loanList = loanSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Loan));
+            setLoans(loanList);
+            
+            const emisCollection = collection(db, 'emis');
+            const emiSnapshot = await getDocs(emisCollection);
+            const emiList = emiSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Emi));
+            setAllEmis(emiList);
+            
         } catch (error) {
-            console.error("Failed to load data from localStorage", error);
+            console.error("Failed to load data from Firestore", error);
+            toast({variant: 'destructive', title: "Error", description: "Failed to load data from Firestore."})
+        } finally {
+            setLoading(false);
         }
+    }
+    
+    useEffect(() => {
+        fetchData();
     }, []);
 
     useEffect(() => {
@@ -67,7 +87,7 @@ export default function EmiCollectionPage() {
 
         // Filter by month and year
         results = results.filter(emi => {
-            const dueDate = new Date(emi.dueDate);
+            const dueDate = emi.dueDate.toDate();
             return dueDate.getMonth() === selectedMonth && dueDate.getFullYear() === selectedYear;
         });
 
@@ -97,16 +117,16 @@ export default function EmiCollectionPage() {
         return { loan, customer };
     }
 
-    const handleMarkAsPaid = (emiId: string) => {
-        const updatedEmis = allEmis.map(emi => {
-            if (emi.id === emiId) {
-                return { ...emi, status: 'paid' as const };
-            }
-            return emi;
-        });
-        localStorage.setItem('jls_emis', JSON.stringify(updatedEmis));
-        setAllEmis(updatedEmis);
-        toast({ title: 'EMI Paid', description: `EMI ${emiId} has been marked as paid.` });
+    const handleMarkAsPaid = async (emiId: string) => {
+        try {
+            const emiRef = doc(db, 'emis', emiId);
+            await updateDoc(emiRef, { status: 'paid' });
+            
+            toast({ title: 'EMI Paid', description: `EMI has been marked as paid.` });
+            fetchData(); // Refresh data
+        } catch (e: any) {
+             toast({ variant: 'destructive', title: "Error", description: `Failed to update EMI: ${e.message}`});
+        }
     };
 
     return (
@@ -146,7 +166,7 @@ export default function EmiCollectionPage() {
                     </div>
                 </div>
 
-                {filteredEmis.length === 0 ? (
+                {loading ? <p>Loading...</p> : filteredEmis.length === 0 ? (
                     <div className="flex flex-col items-center justify-center text-center p-10 border-2 border-dashed rounded-lg mt-6">
                         <Receipt className="h-12 w-12 text-muted-foreground mb-4" />
                         <h3 className="text-xl font-semibold">No EMIs Found for {months.find(m=>m.value === selectedMonth)?.label} {selectedYear}</h3>
@@ -176,7 +196,7 @@ export default function EmiCollectionPage() {
                                             <TableCell className="font-medium">{emi.loanId}</TableCell>
                                             <TableCell>{customer?.name || 'N/A'}</TableCell>
                                             <TableCell>{emi.installment}</TableCell>
-                                            <TableCell>{new Date(emi.dueDate).toLocaleDateString()}</TableCell>
+                                            <TableCell>{emi.dueDate.toDate().toLocaleDateString()}</TableCell>
                                             <TableCell>Rs. {emi.amount.toLocaleString()}</TableCell>
                                             <TableCell>
                                                 <Badge variant={emi.status === 'paid' ? 'default' : 'secondary'} className={emi.status === 'paid' ? 'bg-green-600' : 'bg-red-500'}>

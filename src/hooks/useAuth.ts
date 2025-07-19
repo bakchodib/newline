@@ -1,75 +1,86 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import { onAuthStateChanged, signOut, User as FirebaseUser } from 'firebase/auth';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 
-type User = {
-  id: string;
+type AppUser = {
+  uid: string;
   loginId: string;
   name: string;
   role: 'admin' | 'agent' | 'customer';
 };
 
-export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
+interface AuthContextType {
+  user: AppUser | null;
+  firebaseUser: FirebaseUser | null;
+  loading: boolean;
+  logout: () => void;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider = ({ children }: { children: ReactNode }) => {
+  const [user, setUser] = useState<AppUser | null>(null);
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isAuthChecked, setIsAuthChecked] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    const checkUser = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session) {
-          // If there's a Supabase session, try to get user data from localStorage.
-          // In a real app, you might re-fetch the profile here.
-          const storedUser = localStorage.getItem('jls_user');
-          if (storedUser) {
-            setUser(JSON.parse(storedUser));
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+      if (fbUser) {
+        // User is signed in, get their profile from Firestore
+        const userDocRef = doc(db, "users", fbUser.uid);
+        const unsubscribeSnapshot = onSnapshot(userDocRef, (doc) => {
+          if (doc.exists()) {
+            setUser({ uid: doc.id, ...doc.data() } as AppUser);
           } else {
-            // This case can happen if localStorage is cleared but session persists.
-            // We should log out to clear the inconsistent state.
-            await supabase.auth.signOut();
-            if (pathname !== '/login') router.push('/login');
+            // Profile doesn't exist, this might be a transient state during signup
+            // or an error case.
+            setUser(null);
           }
-        } else if (pathname !== '/login') {
+          setLoading(false);
+        });
+
+        // Cleanup snapshot listener on unmount
+        return () => unsubscribeSnapshot();
+
+      } else {
+        // User is signed out
+        setUser(null);
+        setLoading(false);
+        // Redirect to login page if not already there or on signup page
+        if (pathname !== '/login' && pathname !== '/signup') {
           router.push('/login');
         }
-      } catch (error) {
-        console.error("Auth check failed:", error);
-        if (pathname !== '/login') router.push('/login');
-      } finally {
-        setLoading(false);
-        setIsAuthChecked(true);
-      }
-    };
-    
-    checkUser();
-    
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session && pathname !== '/login') {
-        setUser(null);
-        localStorage.removeItem('jls_user');
-        router.push('/login');
       }
     });
 
-    return () => {
-      subscription.unsubscribe();
-    };
-
+    // Cleanup subscription on unmount
+    return () => unsubscribe();
   }, [router, pathname]);
 
   const logout = async () => {
-    await supabase.auth.signOut();
-    localStorage.removeItem('jls_user');
-    setUser(null);
+    await signOut(auth);
     router.push('/login');
   };
 
-  return { user, logout, loading, isAuthChecked };
+  return (
+    <AuthContext.Provider value={{ user, firebaseUser, loading, logout }}>
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
 }

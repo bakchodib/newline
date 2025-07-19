@@ -9,7 +9,6 @@ import {
   Users,
   HandCoins,
   FileText,
-  Settings,
   LogOut,
   Menu,
   X,
@@ -234,7 +233,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   if (!user) {
-    return null; // or a redirect component, though useAuth handles it.
+    return <AppSkeleton />; // or a redirect component, though useAuth handles it.
   }
 
   const toggleSidebar = () => setIsSidebarOpen(!isSidebarOpen);
@@ -274,7 +273,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           <div className="flex-1">
             {/* Can add search or other header elements here */}
           </div>
-          <UserMenu onLogout={logout} userName={user?.name} userEmail={user?.email} />
+          <UserMenu onLogout={logout} userName={user?.name} userEmail={user?.loginId} />
         </header>
         <main className="flex-1 p-4 sm:p-6 bg-background overflow-y-auto">
             {children}

@@ -4,7 +4,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { PlusCircle, Trash2, Info } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { collection, getDocs, deleteDoc, doc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -31,14 +32,13 @@ import {
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
 export type User = {
-    id: string;
-    authUid: string;
+    id: string; // This will be the document ID from Firestore (same as auth UID)
     name: string;
     loginId: string;
     role: 'admin' | 'agent' | 'customer';
 };
 
-const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (authUid: string, id: string) => void }) => {
+const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (id: string) => void }) => {
     if (users.length === 0) {
         return (
             <div className="flex flex-col justify-center items-center h-48 border-2 border-dashed rounded-lg text-center">
@@ -76,12 +76,12 @@ const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (authU
                                         <AlertDialogHeader>
                                             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                               This action cannot be undone. This will permanently delete the user's account and profile data.
+                                               This will only delete the user's profile data from Firestore. The user's authentication account must be deleted from the Firebase Console.
                                             </AlertDialogDescription>
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
                                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => onDeleteUser(user.authUid, user.id)} className="bg-destructive hover:bg-destructive/90">
+                                            <AlertDialogAction onClick={() => onDeleteUser(user.id)} className="bg-destructive hover:bg-destructive/90">
                                                 Delete
                                             </AlertDialogAction>
                                         </AlertDialogFooter>
@@ -102,9 +102,10 @@ export default function UserManagementPage() {
 
     const fetchUsers = useCallback(async () => {
        try {
-            const { data, error } = await supabase.from('users').select('*');
-            if (error) throw error;
-            setUsers(data as User[]);
+            const usersCollection = collection(db, 'users');
+            const userSnapshot = await getDocs(usersCollection);
+            const userList = userSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
+            setUsers(userList);
         } catch (e: any) {
             toast({ variant: "destructive", title: "Error", description: e.message || "Could not load users." });
             setUsers([]);
@@ -115,17 +116,16 @@ export default function UserManagementPage() {
         fetchUsers();
     }, [fetchUsers]);
     
-    const handleDeleteUser = async (authUid: string, id: string) => {
+    const handleDeleteUser = async (id: string) => {
       try {
-        // We need an admin client to delete users, which is not secure on the client-side.
-        // For this demo, we will just delete the profile from our public table.
-        // In a real production app, you would call a secure Supabase Edge Function.
-        const { error: dbError } = await supabase.from('users').delete().eq('id', id);
-        if (dbError) throw dbError;
+        // Deletes the user profile from Firestore.
+        // Deleting the Firebase Auth user requires the Admin SDK, which cannot be used securely on the client.
+        // This must be done from the Firebase Console or a secure backend environment.
+        await deleteDoc(doc(db, "users", id));
         
         toast({
             title: "User Profile Deleted",
-            description: `User record has been removed. Deleting the auth user requires admin privileges and should be done from the Supabase dashboard.`,
+            description: `User record has been removed from Firestore. Please delete the user from the Firebase Authentication console.`,
             variant: "destructive"
         });
         fetchUsers(); 
@@ -154,7 +154,7 @@ export default function UserManagementPage() {
                     <Info className="h-4 w-4 !text-blue-700" />
                     <AlertTitle className="text-blue-800">User Management</AlertTitle>
                     <AlertDescription className="text-blue-700">
-                       Add new users from the dedicated registration page. You can view all existing users here.
+                       Add new agent or admin users from the dedicated registration page. You can view all existing users here. Deleting a user here only removes their data, not their login.
                     </AlertDescription>
                 </Alert>
                 <UserList users={users} onDeleteUser={handleDeleteUser} />

@@ -4,8 +4,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from 'next/link';
-import { User, AtSign, Lock, LogIn, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { User, AtSign, Lock, Loader2 } from "lucide-react";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
+import { auth, db } from "@/lib/firebase";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -42,37 +44,20 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: email,
-        password: password,
-        options: {
-          data: {
-            name: name,
-            role: 'customer', // Default role for public signups
-          }
-        },
-      });
+      // 1. Create user in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("Signup failed, no user returned.");
-
-      // Insert profile into the public 'users' table
-      const { error: profileError } = await supabase
-        .from('users')
-        .insert({
-          authUid: authData.user.id,
-          name: name,
-          loginId: email,
-          role: 'customer',
-        });
+      if (!user) throw new Error("Signup failed, no user returned.");
       
-      if (profileError) {
-        // This is a tricky state. The auth user exists but the profile failed.
-        // For this app, we'll notify the user and log the error.
-        // In a production app, you might want to trigger a cleanup function.
-        console.error("Failed to create user profile:", profileError);
-        throw new Error("Could not create user profile. Please contact support.");
-      }
+      // 2. Create user profile in Firestore
+      const userProfile = {
+        name: name,
+        loginId: email,
+        role: 'customer', // Default role for public signups
+      };
+      
+      await setDoc(doc(db, "users", user.uid), userProfile);
 
       toast({
         title: "Signup Successful",

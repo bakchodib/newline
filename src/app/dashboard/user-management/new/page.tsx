@@ -7,7 +7,9 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useRouter } from 'next/navigation';
 import { Loader2, UserPlus } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '@/lib/firebase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -41,37 +43,33 @@ export default function NewUserPage() {
 
   const onSubmit = async (data: z.infer<typeof newUserSchema>) => {
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.loginId,
-        password: data.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/`,
-          data: {
-            name: data.name,
-            role: data.role,
-          }
-        },
-      });
-
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("User creation failed, no user returned.");
-
-      const { error: profileError } = await supabase
-        .from('users')
-        .insert({
-          authUid: authData.user.id,
-          name: data.name,
-          loginId: data.loginId,
-          role: data.role,
-        });
+      // NOTE: Firebase Auth doesn't allow creating users with password from the client-side
+      // without signing them in. This functionality is intended for an Admin SDK on a server.
+      // For this client-side only app, we have to use a workaround. We will create the user
+      // but this will also sign in the admin as the new user. The admin will need to log out and log back in.
+      // A better solution involves a server-side function (e.g., Firebase Cloud Function).
       
-      if (profileError) throw profileError;
+      const userCredential = await createUserWithEmailAndPassword(auth, data.loginId, data.password);
+      const user = userCredential.user;
 
+      if (!user) {
+        throw new Error("User creation failed in Firebase Auth.");
+      }
+
+      // 2. Create the user's profile in Firestore
+      const userProfile = {
+        name: data.name,
+        loginId: data.loginId,
+        role: data.role,
+      };
+      await setDoc(doc(db, 'users', user.uid), userProfile);
+      
       toast({ 
         title: "User Created Successfully", 
-        description: `${data.name} can now log in.` 
+        description: `${data.name} can now log in. You have been logged in as this new user. Please log out and back in with your admin account.` 
       });
       router.push('/dashboard/user-management');
+
     } catch (e: any) {
       console.error("Error adding user:", e);
       toast({ variant: 'destructive', title: "User Creation Failed", description: e.message || "An unexpected error occurred." });

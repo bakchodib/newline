@@ -7,7 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { HandCoins, Eye, Edit, CalendarIcon, Loader2, PlusCircle, XCircle } from 'lucide-react';
 import { format } from 'date-fns';
-
+import { collection, getDocs, doc, updateDoc, writeBatch, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { LoanDocuments } from "@/components/loan-documents";
 import { LoanDetailsView } from "@/components/loan-details-view";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
@@ -21,18 +22,6 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
@@ -60,7 +49,7 @@ const loanSchema = z.object({
   amount: z.coerce.number().min(1, "Amount must be greater than 0."),
   interestRate: z.coerce.number().min(0, "Interest rate cannot be negative."),
   tenure: z.coerce.number().int().min(1, "Tenure must be at least 1 month."),
-  disbursalDate: z.date({ required_error: "Disbursal date is required." }),
+  disbursalDate: z.union([z.instanceof(Timestamp), z.date()]),
   processingFee: z.coerce.number().min(0).optional(),
   status: z.enum(['active', 'closed']).default('active'),
   closureDetails: z.object({
@@ -78,7 +67,7 @@ type Emi = {
   id: string;
   loanId: string;
   installment: number;
-  dueDate: string;
+  dueDate: Timestamp;
   amount: number;
   status: 'paid' | 'unpaid';
 };
@@ -92,10 +81,9 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
             const dueDate = new Date(startDate);
             dueDate.setMonth(startDate.getMonth() + i);
             schedule.push({
-                id: `EMI-${loanId}-${i}`,
                 loanId: loanId,
                 installment: i,
-                dueDate: dueDate.toISOString(),
+                dueDate: Timestamp.fromDate(dueDate),
                 amount: parseFloat(emiAmount.toFixed(2)),
                 status: 'unpaid' as const,
             });
@@ -110,10 +98,9 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
         const dueDate = new Date(startDate);
         dueDate.setMonth(startDate.getMonth() + i);
         schedule.push({
-            id: `EMI-${loanId}-${i}`,
             loanId: loanId,
             installment: i,
-            dueDate: dueDate.toISOString(),
+            dueDate: Timestamp.fromDate(dueDate),
             amount: parseFloat(emiAmount.toFixed(2)),
             status: 'unpaid' as const,
         });
@@ -122,443 +109,7 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
 };
 
 
-const topUpFormSchema = z.object({
-    topupAmount: z.coerce.number().min(1, "Top-up amount is required."),
-    interestRate: z.coerce.number().min(0, "New interest rate is required."),
-    tenure: z.coerce.number().int().min(1, "New tenure is required."),
-    topupDate: z.date(),
-    processingFee: z.coerce.number().min(0).default(0),
-});
-type TopUpForm = z.infer<typeof topUpFormSchema>;
-
-const LoanTopUpDialog = ({ loan, onLoanUpdated }: { loan: Loan & { id: string }, onLoanUpdated: () => void }) => {
-    const { toast } = useToast();
-    const [isOpen, setIsOpen] = useState(false);
-    const [outstandingPrincipal, setOutstandingPrincipal] = useState(0);
-
-    const form = useForm<TopUpForm>({
-        resolver: zodResolver(topUpFormSchema),
-        defaultValues: {
-            topupDate: new Date(),
-            interestRate: loan.interestRate,
-            tenure: loan.tenure,
-            processingFee: 0,
-        },
-    });
-    const { register, control, handleSubmit, formState: { errors, isSubmitting } } = form;
-
-    useEffect(() => {
-        if (!isOpen) return;
-        
-        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        const paidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
-        const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
-        
-        if (unpaidEmis.length === 0) {
-            setOutstandingPrincipal(0);
-            return;
-        }
-
-        const monthlyRate = loan.interestRate / 12 / 100;
-        let currentPrincipal = loan.amount;
-        
-        // This is a simplified calculation. A real amortization schedule would be more accurate.
-        const emiAmount = unpaidEmis[0]?.amount || 0;
-        if (monthlyRate > 0) {
-            for (let i = 0; i < paidEmis.length; i++) {
-                const interestPortion = currentPrincipal * monthlyRate;
-                const principalPortion = emiAmount - interestPortion;
-                currentPrincipal -= principalPortion;
-            }
-        } else {
-             currentPrincipal -= paidEmis.length * emiAmount;
-        }
-
-        setOutstandingPrincipal(parseFloat(currentPrincipal.toFixed(2)));
-
-    }, [isOpen, loan]);
-
-
-    const handleTopUp = (data: TopUpForm) => {
-        const newTotalPrincipal = outstandingPrincipal + data.topupAmount;
-
-        const newTopUpRecord: TopUp = {
-            id: `TU-${Date.now()}`,
-            topupDate: data.topupDate,
-            topupAmount: data.topupAmount,
-            processingFee: data.processingFee,
-            interestRate: data.interestRate,
-            tenure: data.tenure,
-        };
-        
-        // 1. Update the main loan object
-        const allLoans: (Loan & { id: string })[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-        const updatedLoans = allLoans.map(l => {
-            if (l.id === loan.id) {
-                return {
-                    ...l,
-                    amount: newTotalPrincipal, // New combined principal
-                    interestRate: data.interestRate, // New rate
-                    tenure: data.tenure, // New tenure
-                    disbursalDate: data.topupDate, // The effective "start" date for the new schedule
-                    topupHistory: [...(l.topupHistory || []), newTopUpRecord],
-                };
-            }
-            return l;
-        });
-        localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
-
-        // 2. Remove old unpaid EMIs
-        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        const otherLoansEmis = allEmis.filter(emi => emi.loanId !== loan.id);
-        const paidEmisForThisLoan = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
-
-        // 3. Generate new EMI schedule
-        const newEmiSchedule = generateEmiSchedule(loan.id, newTotalPrincipal, data.interestRate, data.tenure, data.topupDate);
-        
-        // 4. Save the updated EMI list
-        localStorage.setItem('jls_emis', JSON.stringify([...otherLoansEmis, ...paidEmisForThisLoan, ...newEmiSchedule]));
-
-        toast({
-            title: "Loan Top-up Successful!",
-            description: `Loan ${loan.id} has been topped up. New EMI schedule is now active.`,
-        });
-
-        onLoanUpdated();
-        setIsOpen(false);
-    };
-
-    return (
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
-                    <PlusCircle className="h-4 w-4 text-green-600" />
-                </Button>
-            </DialogTrigger>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>Loan Top-up for: {loan.id}</DialogTitle>
-                    <DialogDescription>
-                        The current outstanding principal is approx. <strong>Rs. {outstandingPrincipal.toLocaleString()}</strong>. The new amount will be added to this to create a new loan schedule.
-                    </DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleSubmit(handleTopUp)} className="space-y-4">
-                     <div>
-                        <Label htmlFor="topupAmount">Top-up Amount (Rs.)</Label>
-                        <Input id="topupAmount" type="number" {...register('topupAmount')} />
-                        {errors.topupAmount && <p className="text-destructive text-sm mt-1">{errors.topupAmount.message}</p>}
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <Label htmlFor="interestRate">New Interest Rate (% p.a.)</Label>
-                            <Input id="interestRate" type="number" step="0.1" {...register('interestRate')} />
-                            {errors.interestRate && <p className="text-destructive text-sm mt-1">{errors.interestRate.message}</p>}
-                        </div>
-                        <div>
-                            <Label htmlFor="tenure">New Tenure (Months)</Label>
-                            <Input id="tenure" type="number" {...register('tenure')} />
-                            {errors.tenure && <p className="text-destructive text-sm mt-1">{errors.tenure.message}</p>}
-                        </div>
-                    </div>
-                     <div>
-                        <Label htmlFor="processingFee">Processing Fee for Top-up (Rs.)</Label>
-                        <Input id="processingFee" type="number" {...register('processingFee')} />
-                        {errors.processingFee && <p className="text-destructive text-sm mt-1">{errors.processingFee.message}</p>}
-                    </div>
-                     <div>
-                        <Label htmlFor="topupDate">Top-up Date</Label>
-                         <Controller
-                            name="topupDate"
-                            control={control}
-                            render={({ field }) => (
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button
-                                            variant={"outline"}
-                                            className={cn("w-full justify-start text-left font-normal", !field.value && "text-muted-foreground")}
-                                        >
-                                            <CalendarIcon className="mr-2 h-4 w-4" />
-                                            {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-auto p-0">
-                                        <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                                    </PopoverContent>
-                                </Popover>
-                            )}
-                        />
-                         {errors.topupDate && <p className="text-destructive text-sm mt-1">{errors.topupDate.message}</p>}
-                    </div>
-
-                    <DialogFooter>
-                        <Button type="submit" disabled={isSubmitting}>
-                            {isSubmitting ? 'Processing...' : 'Confirm Top-up'}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-    );
-};
-
-
-const closureFormSchema = z.object({
-    closureDate: z.date(),
-    closureCharges: z.coerce.number().min(0).default(0),
-    remarks: z.string().optional(),
-});
-type ClosureForm = z.infer<typeof closureFormSchema>;
-
-const EarlyCloseDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, onLoanUpdated: () => void }) => {
-    const { toast } = useToast();
-    const [isOpen, setIsOpen] = useState(false);
-    const [calculations, setCalculations] = useState({
-        principal: 0,
-        interest: 0,
-        total: 0
-    });
-    
-    const form = useForm<ClosureForm>({
-        resolver: zodResolver(closureFormSchema),
-        defaultValues: { closureDate: new Date(), closureCharges: 0, remarks: "" }
-    });
-    const { register, control, watch, handleSubmit, formState: { isSubmitting } } = form;
-
-    const closureDate = watch('closureDate');
-    const closureCharges = watch('closureCharges');
-
-    useEffect(() => {
-        if (!isOpen) return;
-
-        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        const paidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
-        const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
-
-        if (unpaidEmis.length === 0) {
-            setCalculations({ principal: 0, interest: 0, total: 0 });
-            return;
-        }
-
-        const monthlyRate = loan.interestRate / 12 / 100;
-        let outstandingPrincipal = loan.amount;
-
-        // Simplified principal reduction based on paid EMIs
-        // A real amortization schedule would be more accurate
-        const emiAmount = unpaidEmis[0]?.amount || 0;
-        for(let i = 0; i < paidEmis.length; i++) {
-            const interestPortion = outstandingPrincipal * monthlyRate;
-            const principalPortion = emiAmount - interestPortion;
-            outstandingPrincipal -= principalPortion;
-        }
-        
-        const lastDueDate = paidEmis.length > 0 ? new Date(paidEmis[paidEmis.length - 1].dueDate) : new Date(loan.disbursalDate);
-        const daysSinceLastDue = Math.max(0, (closureDate.getTime() - lastDueDate.getTime()) / (1000 * 3600 * 24));
-        const interestTillDate = (outstandingPrincipal * (loan.interestRate / 100) / 365) * daysSinceLastDue;
-
-        setCalculations({
-            principal: parseFloat(outstandingPrincipal.toFixed(2)),
-            interest: parseFloat(interestTillDate.toFixed(2)),
-            total: parseFloat((outstandingPrincipal + interestTillDate + Number(closureCharges)).toFixed(2))
-        });
-
-    }, [closureDate, closureCharges, loan, isOpen]);
-
-    const handleEarlyClose = (data: ClosureForm) => {
-        // 1. Update Loan Status and add closure details
-        const allLoans: (Loan & {id: string})[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-        const updatedLoans = allLoans.map(l => {
-            if (l.id === loan.id) {
-                return {
-                    ...l,
-                    status: 'closed' as const,
-                    closureDetails: {
-                        closureDate: data.closureDate,
-                        closureCharges: data.closureCharges,
-                        remarks: data.remarks,
-                    }
-                };
-            }
-            return l;
-        });
-        localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
-
-        // 2. Remove future EMIs from master list
-        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        const remainingEmis = allEmis.filter(emi => !(emi.loanId === loan.id && emi.status === 'unpaid'));
-        localStorage.setItem('jls_emis', JSON.stringify(remainingEmis));
-
-        toast({ title: "Loan Closed Successfully", description: `Loan ${loan.id} has been marked as closed.` });
-        onLoanUpdated();
-        setIsOpen(false);
-    };
-
-    return (
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
-                    <XCircle className="h-4 w-4 text-red-600" />
-                </Button>
-            </DialogTrigger>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>Early Loan Closure: {loan.id}</DialogTitle>
-                    <DialogDescription>
-                       Finalize the early closure of this loan. Calculations are estimates.
-                    </DialogDescription>
-                </DialogHeader>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-4 my-4 p-4 border rounded-lg">
-                    <div className="font-medium text-muted-foreground">Outstanding Principal</div>
-                    <div className="text-right font-bold">Rs. {calculations.principal.toLocaleString()}</div>
-                    <div className="font-medium text-muted-foreground">Interest up to Closure Date</div>
-                    <div className="text-right font-bold">Rs. {calculations.interest.toLocaleString()}</div>
-                    <div className="font-medium text-muted-foreground">Closure Charges</div>
-                    <div className="text-right font-bold">Rs. {Number(closureCharges).toLocaleString()}</div>
-                    <div className="col-span-2 border-t my-2"></div>
-                    <div className="font-semibold text-lg text-primary">Total Payable Amount</div>
-                    <div className="text-right font-extrabold text-lg text-primary">Rs. {calculations.total.toLocaleString()}</div>
-                </div>
-                 <form onSubmit={handleSubmit(handleEarlyClose)} className="space-y-4">
-                     <div>
-                        <Label htmlFor="closureDate">Closure Date</Label>
-                        <Controller
-                        name="closureDate"
-                        control={control}
-                        render={({ field }) => (
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant={"outline"}
-                                        className={cn("w-full justify-start text-left font-normal", !field.value && "text-muted-foreground")}
-                                    >
-                                        <CalendarIcon className="mr-2 h-4 w-4" />
-                                        {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0">
-                                    <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                                </PopoverContent>
-                            </Popover>
-                        )}
-                        />
-                    </div>
-                    <div>
-                        <Label htmlFor="closureCharges">Closure Charges (Rs.)</Label>
-                        <Input id="closureCharges" type="number" {...register('closureCharges')} />
-                    </div>
-                     <div>
-                        <Label htmlFor="remarks">Remarks (Optional)</Label>
-                        <Textarea id="remarks" {...register('remarks')} />
-                    </div>
-                    <DialogFooter>
-                         <Button type="submit" variant="destructive" disabled={isSubmitting}>
-                           {isSubmitting ? 'Processing...' : 'Confirm & Close Loan'}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-    );
-};
-
-
-const EditLoanDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, onLoanUpdated: () => void }) => {
-    const [isOpen, setIsOpen] = useState(false);
-    const { toast } = useToast();
-    const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<Loan>({
-        resolver: zodResolver(loanSchema),
-        defaultValues: {
-            ...loan,
-            disbursalDate: new Date(loan.disbursalDate),
-        },
-    });
-
-    const onSubmit = (data: Loan) => {
-        try {
-            const allLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]') as (Loan & {id: string})[];
-            const updatedLoans = allLoans.map(l => l.id === loan.id ? { ...loan, ...data, status: loan.status || 'active' } : l);
-            localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
-
-            // Note: This simplified update does not regenerate EMI schedules.
-            // A more complex implementation would be needed to handle that.
-            
-            toast({ title: "Loan Updated", description: `Loan ${loan.id} has been successfully updated.` });
-            setIsOpen(false);
-            onLoanUpdated();
-        } catch (e) {
-            console.error(e);
-            toast({ variant: 'destructive', title: "Error", description: "Failed to update loan." });
-        }
-    };
-
-    return (
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-                <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
-                    <Edit className="h-4 w-4" />
-                </Button>
-            </DialogTrigger>
-            <DialogContent>
-                <DialogHeader>
-                    <DialogTitle>Edit Loan: {loan.id}</DialogTitle>
-                    <DialogDescription>
-                        Modify the details for this loan. Note that changing these values does not automatically regenerate the EMI schedule.
-                    </DialogDescription>
-                </DialogHeader>
-                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                    <div>
-                        <Label htmlFor="amount">Loan Amount (Rs.)</Label>
-                        <Input id="amount" type="number" {...register('amount')} />
-                        {errors.amount && <p className="text-destructive text-sm mt-1">{errors.amount.message}</p>}
-                    </div>
-                     <div className="grid grid-cols-2 gap-4">
-                        <div>
-                        <Label htmlFor="interestRate">Interest Rate (% p.a.)</Label>
-                        <Input id="interestRate" type="number" step="0.1" {...register('interestRate')} />
-                        {errors.interestRate && <p className="text-destructive text-sm mt-1">{errors.interestRate.message}</p>}
-                        </div>
-                        <div>
-                        <Label htmlFor="tenure">Tenure (Months)</Label>
-                        <Input id="tenure" type="number" {...register('tenure')} />
-                        {errors.tenure && <p className="text-destructive text-sm mt-1">{errors.tenure.message}</p>}
-                        </div>
-                    </div>
-                    <div>
-                        <Label htmlFor="disbursalDate">Disbursal Date</Label>
-                        <Controller
-                        name="disbursalDate"
-                        control={control}
-                        render={({ field }) => (
-                            <Popover>
-                                <PopoverTrigger asChild>
-                                    <Button
-                                        variant={"outline"}
-                                        className={cn("w-full justify-start text-left font-normal", !field.value && "text-muted-foreground")}
-                                    >
-                                        <CalendarIcon className="mr-2 h-4 w-4" />
-                                        {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
-                                    </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0">
-                                    <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
-                                </PopoverContent>
-                            </Popover>
-                        )}
-                        />
-                        {errors.disbursalDate && <p className="text-destructive text-sm mt-1">{errors.disbursalDate.message}</p>}
-                    </div>
-                    <DialogFooter>
-                        <Button type="submit" disabled={isSubmitting}>
-                        {isSubmitting ? <><Loader2 className="animate-spin mr-2" /> Saving...</> : 'Save Changes'}
-                        </Button>
-                    </DialogFooter>
-                </form>
-            </DialogContent>
-        </Dialog>
-    );
-};
-
-
-const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: string})[], customers: Customer[], onLoanUpdated: () => void }) => {
+const LoanList = ({ loans, customers, onLoanUpdated }: { loans: Loan[], customers: Customer[], onLoanUpdated: () => void }) => {
     
     const findCustomer = (customerId: string) => customers.find(c => c.id === customerId);
 
@@ -570,6 +121,10 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                 <p className="text-muted-foreground">Disbursed loans will appear here.</p>
             </div>
         )
+    }
+
+    const toDate = (date: Date | Timestamp) => {
+        return date instanceof Timestamp ? date.toDate() : date;
     }
 
     return (
@@ -595,7 +150,7 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                 <TableCell>{customer?.name || 'Unknown'}</TableCell>
                                 <TableCell>Rs. {loan.amount.toLocaleString()}</TableCell>
                                 <TableCell>{loan.tenure} m</TableCell>
-                                <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
+                                <TableCell>{format(toDate(loan.disbursalDate), "PP")}</TableCell>
                                 <TableCell>
                                     <Badge variant={loan.status === 'closed' ? 'destructive' : 'default'} className={cn(loan.status === 'active' && 'bg-green-600')}>
                                         {loan.status ? loan.status.charAt(0).toUpperCase() + loan.status.slice(1) : 'Active'}
@@ -610,24 +165,6 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                                        <LoanDetailsView loan={loan} customer={customer} />
                                                    </TooltipTrigger>
                                                    <TooltipContent><p>View Details</p></TooltipContent>
-                                               </Tooltip>
-                                               <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <EditLoanDialog loan={loan} onLoanUpdated={onLoanUpdated} />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent><p>Edit Loan</p></TooltipContent>
-                                               </Tooltip>
-                                               <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <LoanTopUpDialog loan={loan} onLoanUpdated={onLoanUpdated} />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent><p>Loan Top-up</p></TooltipContent>
-                                               </Tooltip>
-                                               <Tooltip>
-                                                    <TooltipTrigger asChild>
-                                                        <EarlyCloseDialog loan={loan} onLoanUpdated={onLoanUpdated} />
-                                                    </TooltipTrigger>
-                                                    <TooltipContent><p>Early Close</p></TooltipContent>
                                                </Tooltip>
                                                <LoanDocuments customer={customer} loan={loan} />
                                             </div>
@@ -645,21 +182,21 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
 
 export default function AllLoansPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
-    const [loans, setLoans] = useState<(Loan & {id: string})[]>([]);
+    const [loans, setLoans] = useState<Loan[]>([]);
 
-    const fetchLoans = () => {
+    const fetchLoans = async () => {
          try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            setCustomers(storedCustomers);
-            const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]') as (Loan & {id: string})[];
-            setLoans(storedLoans.map((l: any) => ({
-                ...l, 
-                disbursalDate: new Date(l.disbursalDate),
-                closureDetails: l.closureDetails ? { ...l.closureDetails, closureDate: new Date(l.closureDetails.closureDate) } : undefined,
-                topupHistory: l.topupHistory?.map((th: any) => ({...th, topupDate: new Date(th.topupDate)})) || [],
-            })));
-        } catch (e) {
-            console.error("Failed to parse data from localStorage", e);
+            const customersCollection = collection(db, 'customers');
+            const customerSnapshot = await getDocs(customersCollection);
+            const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customerList);
+
+            const loansCollection = collection(db, 'loans');
+            const loanSnapshot = await getDocs(loansCollection);
+            const loanList = loanSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Loan));
+            setLoans(loanList);
+        } catch (e: any) {
+            console.error("Failed to parse data from Firestore", e);
             setCustomers([]);
             setLoans([]);
         }
@@ -685,11 +222,3 @@ export default function AllLoansPage() {
         </div>
     );
 }
-
-    
-
-    
-
-
-
-    

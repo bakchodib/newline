@@ -2,7 +2,9 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { CheckSquare, HandCoins, ThumbsUp } from 'lucide-react';
+import { CheckSquare, ThumbsUp } from 'lucide-react';
+import { collection, getDocs, doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
@@ -22,39 +24,48 @@ export default function LoanApprovalsPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const { toast } = useToast();
 
-    useEffect(() => {
-        try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            setCustomers(storedCustomers);
-            const storedPending = JSON.parse(localStorage.getItem('jls_pending_loans') || '[]');
-            setPendingLoans(storedPending);
+    const fetchAllData = async () => {
+         try {
+            const customersCollection = collection(db, 'customers');
+            const customerSnapshot = await getDocs(customersCollection);
+            const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customerList);
+
+            const appsCollection = collection(db, 'loanApplications');
+            const appsSnapshot = await getDocs(appsCollection);
+            const appsList = appsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LoanApplication));
+            setPendingLoans(appsList.filter(app => app.status === 'pending'));
+
         } catch (e) {
-            console.error("Failed to parse data from localStorage", e);
+            console.error("Failed to parse data from Firestore", e);
         }
+    };
+    
+    useEffect(() => {
+        fetchAllData();
     }, []);
 
     const findCustomerName = (customerId: string) => {
         return customers.find(c => c.id === customerId)?.name || 'Unknown';
     };
 
-    const handleApprove = (appId: string) => {
+    const handleApprove = async (appId: string) => {
         const loanToApprove = pendingLoans.find(app => app.id === appId);
         if (!loanToApprove) return;
 
-        // Update status and move to approved list
-        const approvedLoan = { ...loanToApprove, status: 'approved' as const };
-        const approvedLoans = JSON.parse(localStorage.getItem('jls_approved_loans') || '[]');
-        localStorage.setItem('jls_approved_loans', JSON.stringify([...approvedLoans, approvedLoan]));
-
-        // Remove from pending list
-        const updatedPending = pendingLoans.filter(app => app.id !== appId);
-        localStorage.setItem('jls_pending_loans', JSON.stringify(updatedPending));
-        setPendingLoans(updatedPending);
-
-        toast({
-            title: "Loan Approved",
-            description: `Loan application ${appId} has been approved.`,
-        });
+        try {
+            const loanRef = doc(db, "loanApplications", appId);
+            await updateDoc(loanRef, { status: 'approved' });
+            
+            fetchAllData(); // Refresh the list
+            
+            toast({
+                title: "Loan Approved",
+                description: `Loan application ${appId} has been approved.`,
+            });
+        } catch (e: any) {
+            toast({ variant: 'destructive', title: "Error", description: `Failed to approve loan: ${e.message}`});
+        }
     };
 
     return (
@@ -88,7 +99,7 @@ export default function LoanApprovalsPage() {
                                         <TableCell className="font-medium">{app.id}</TableCell>
                                         <TableCell>{findCustomerName(app.customerId)}</TableCell>
                                         <TableCell>Rs. {app.amount.toLocaleString()}</TableCell>
-                                        <TableCell>{new Date(app.applicationDate).toLocaleDateString()}</TableCell>
+                                        <TableCell>{app.applicationDate.toDate().toLocaleDateString()}</TableCell>
                                         <TableCell className="text-right">
                                             <Button size="sm" onClick={() => handleApprove(app.id!)}>
                                                 <ThumbsUp className="mr-2 h-4 w-4" /> Approve

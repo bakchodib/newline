@@ -5,9 +5,9 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import Image from 'next/image';
 import { HandCoins, User, CheckCircle2 } from 'lucide-react';
-
+import { collection, addDoc, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -31,7 +31,7 @@ const loanApplicationSchema = z.object({
   customerId: z.string({ required_error: "Please select a customer." }),
   amount: z.coerce.number().min(1, "Amount must be greater than 0."),
   status: z.enum(['pending', 'approved', 'disbursed', 'rejected']).default('pending'),
-  applicationDate: z.date().default(() => new Date()),
+  applicationDate: z.instanceof(Timestamp),
 });
 
 export type LoanApplication = z.infer<typeof loanApplicationSchema>;
@@ -67,11 +67,14 @@ const CustomerSelector = ({ customers, onSelectCustomer, selectedCustomerId }: {
 };
 
 
-const ApplyLoanForm = ({ customers, onLoanApplied }: { customers: Customer[], onLoanApplied: (app: LoanApplication) => void }) => {
+const ApplyLoanForm = ({ customers, onLoanApplied }: { customers: Customer[], onLoanApplied: () => void }) => {
   const { toast } = useToast();
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
-  const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting } } = useForm<LoanApplication>({
-    resolver: zodResolver(loanApplicationSchema),
+  const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting } } = useForm<{customerId: string, amount: number}>({
+    resolver: zodResolver(z.object({
+      customerId: z.string().min(1),
+      amount: z.coerce.number().min(1),
+    })),
   });
 
   const handleSelectCustomer = (id: string) => {
@@ -79,19 +82,24 @@ const ApplyLoanForm = ({ customers, onLoanApplied }: { customers: Customer[], on
     setValue('customerId', id);
   };
 
-  const onSubmit = (data: LoanApplication) => {
-    const newApplication: LoanApplication = {
+  const onSubmit = async (data: {customerId: string, amount: number}) => {
+    
+    const newApplication = {
       ...data,
-      id: `APP-${Date.now()}`
+      status: 'pending',
+      applicationDate: serverTimestamp(),
     };
     
-    const existingApps = JSON.parse(localStorage.getItem('jls_pending_loans') || '[]');
-    localStorage.setItem('jls_pending_loans', JSON.stringify([...existingApps, newApplication]));
-    
-    onLoanApplied(newApplication);
-    toast({ title: "Success", description: "Loan application submitted successfully." });
-    reset();
-    setSelectedCustomerId(null);
+    try {
+        await addDoc(collection(db, "loanApplications"), newApplication);
+        onLoanApplied();
+        toast({ title: "Success", description: "Loan application submitted successfully." });
+        reset();
+        setSelectedCustomerId(null);
+    } catch(e: any) {
+        console.error("Error submitting application: ", e);
+        toast({ variant: 'destructive', title: "Error", description: "Could not submit application."});
+    }
   };
   
   const selectedCustomer = customers.find(c => c.id === selectedCustomerId);
@@ -162,7 +170,7 @@ const ApplicationList = ({ applications, customers }: { applications: LoanApplic
                             <TableCell className="font-medium">{app.id}</TableCell>
                             <TableCell>{findCustomerName(app.customerId)}</TableCell>
                             <TableCell>Rs. {app.amount.toLocaleString()}</TableCell>
-                            <TableCell>{new Date(app.applicationDate).toLocaleDateString()}</TableCell>
+                            <TableCell>{app.applicationDate.toDate().toLocaleDateString()}</TableCell>
                             <TableCell>
                                 <span className="px-2 py-1 text-xs font-semibold rounded-full bg-yellow-200 text-yellow-800">
                                     {app.status}
@@ -180,20 +188,26 @@ export default function LoanApplicationsPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [applications, setApplications] = useState<LoanApplication[]>([]);
 
-    useEffect(() => {
+    const fetchAllData = async () => {
         try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            setCustomers(storedCustomers);
-            const storedApps = JSON.parse(localStorage.getItem('jls_pending_loans') || '[]');
-            setApplications(storedApps);
-        } catch (e) {
-            console.error("Failed to parse data from localStorage", e);
-        }
-    }, []);
+            const customersCollection = collection(db, 'customers');
+            const customerSnapshot = await getDocs(customersCollection);
+            const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customerList);
 
-    const handleLoanApplied = (app: LoanApplication) => {
-        setApplications(prev => [...prev, app]);
-    };
+            const appsCollection = collection(db, 'loanApplications');
+            const appsSnapshot = await getDocs(appsCollection);
+            const appsList = appsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LoanApplication));
+            setApplications(appsList.filter(app => app.status === 'pending'));
+
+        } catch (e) {
+            console.error("Failed to parse data from Firestore", e);
+        }
+    }
+    
+    useEffect(() => {
+        fetchAllData();
+    }, []);
 
     return (
         <Card>
@@ -203,7 +217,7 @@ export default function LoanApplicationsPage() {
             </CardHeader>
             <CardContent>
                 {customers.length > 0 ? (
-                    <ApplyLoanForm customers={customers} onLoanApplied={handleLoanApplied} />
+                    <ApplyLoanForm customers={customers} onLoanApplied={fetchAllData} />
                 ) : (
                     <div className="flex flex-col items-center justify-center text-center p-10 border-2 border-dashed rounded-lg">
                         <User className="h-12 w-12 text-muted-foreground mb-4" />

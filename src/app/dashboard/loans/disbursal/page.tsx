@@ -7,6 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { format } from 'date-fns';
 import { Banknote, CalendarIcon, Send } from 'lucide-react';
+import { collection, getDocs, doc, addDoc, writeBatch } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import {
@@ -47,10 +49,9 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
         const dueDate = new Date(startDate);
         dueDate.setMonth(startDate.getMonth() + i);
         schedule.push({
-            id: `EMI-${loanId}-${i}`,
             loanId: loanId,
             installment: i,
-            dueDate: dueDate.toISOString(),
+            dueDate: dueDate,
             amount: parseFloat(emiAmount.toFixed(2)),
             status: 'unpaid' as const,
         });
@@ -59,59 +60,53 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
 };
 
 
-const DisburseLoanDialog = ({ loan, customer, onDisbursed }: { loan: LoanApplication, customer: Customer, onDisbursed: () => void }) => {
+const DisburseLoanDialog = ({ loanApp, customer, onDisbursed }: { loanApp: LoanApplication, customer: Customer, onDisbursed: () => void }) => {
     const [isOpen, setIsOpen] = useState(false);
     const { toast } = useToast();
     const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<DisbursalForm>({
         resolver: zodResolver(disbursalSchema),
     });
 
-    const onSubmit = (data: DisbursalForm) => {
-        const processingFee = loan.amount * 0.05; // 5% processing fee
+    const onSubmit = async (data: DisbursalForm) => {
+        const processingFee = loanApp.amount * 0.05; // 5% processing fee
 
-        const finalLoan: Loan = {
-            id: `L-${Date.now()}`,
-            customerId: loan.customerId,
-            amount: loan.amount,
+        const finalLoan: Omit<Loan, 'id'> = {
+            customerId: loanApp.customerId,
+            amount: loanApp.amount,
             interestRate: data.interestRate,
             tenure: data.tenure,
             disbursalDate: data.disbursalDate,
             processingFee: processingFee,
             status: 'active',
+            topupHistory: [],
         };
 
-        // Generate EMI Schedule
-        const emiSchedule = generateEmiSchedule(finalLoan.id!, finalLoan.amount, finalLoan.interestRate, finalLoan.tenure, finalLoan.disbursalDate);
-        const allEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        localStorage.setItem('jls_emis', JSON.stringify([...allEmis, ...emiSchedule]));
+        const batch = writeBatch(db);
+        try {
+            // 1. Add loan to 'loans' collection
+            const loanRef = doc(collection(db, "loans"));
+            batch.set(loanRef, finalLoan);
 
-        // Add to all loans list
-        const allLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-        localStorage.setItem('jls_loans', JSON.stringify([...allLoans, finalLoan]));
-        
-        // --- Create Customer User Account ---
-        const allUsers = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
-        // Use phone number as the unique login ID (email field)
-        const userEmail = customer.phone; 
-        if (!allUsers[userEmail]) {
-            allUsers[userEmail] = {
-                password: "CUST123",
-                role: "customer",
-                name: customer.name,
-            };
-            localStorage.setItem('jls_users_db', JSON.stringify(allUsers));
-            toast({ title: "Customer Account Created", description: `Login for ${customer.name} created. ID: ${userEmail}`});
+            // 2. Generate and add EMIs to 'emis' collection
+            const emiSchedule = generateEmiSchedule(loanRef.id, finalLoan.amount, finalLoan.interestRate, finalLoan.tenure, finalLoan.disbursalDate);
+            emiSchedule.forEach(emi => {
+                const emiRef = doc(collection(db, "emis"));
+                batch.set(emiRef, emi);
+            });
+            
+            // 3. Update application status
+            const appRef = doc(db, "loanApplications", loanApp.id!);
+            batch.update(appRef, { status: 'disbursed' });
+            
+            await batch.commit();
+
+            toast({ title: "Loan Disbursed!", description: `Loan ${loanRef.id} has been disbursed and EMI schedule generated.` });
+            setIsOpen(false);
+            onDisbursed();
+        } catch(e: any) {
+            console.error("Disbursal failed: ", e);
+            toast({ variant: 'destructive', title: "Error", description: `Disbursal failed: ${e.message}`});
         }
-        // --- End ---
-
-        // Remove from approved list
-        const approvedLoans = JSON.parse(localStorage.getItem('jls_approved_loans') || '[]') as LoanApplication[];
-        const updatedApproved = approvedLoans.filter(l => l.id !== loan.id);
-        localStorage.setItem('jls_approved_loans', JSON.stringify(updatedApproved));
-        
-        toast({ title: "Loan Disbursed!", description: `Loan ${finalLoan.id} has been disbursed and EMI schedule generated.` });
-        setIsOpen(false);
-        onDisbursed();
     };
 
     return (
@@ -121,10 +116,10 @@ const DisburseLoanDialog = ({ loan, customer, onDisbursed }: { loan: LoanApplica
             </DialogTrigger>
             <DialogContent>
                 <DialogHeader>
-                    <DialogTitle>Disburse Loan: {loan.id}</DialogTitle>
+                    <DialogTitle>Disburse Loan: {loanApp.id}</DialogTitle>
                     <DialogDescription>
-                        Finalize loan terms for an amount of Rs. {loan.amount.toLocaleString()}.
-                        A 5% processing fee of Rs. {(loan.amount * 0.05).toLocaleString()} will be applied.
+                        Finalize loan terms for an amount of Rs. {loanApp.amount.toLocaleString()}.
+                        A 5% processing fee of Rs. {(loanApp.amount * 0.05).toLocaleString()} will be applied.
                     </DialogDescription>
                 </DialogHeader>
                  <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
@@ -180,14 +175,20 @@ export default function LoanDisbursalPage() {
     const [approvedLoans, setApprovedLoans] = useState<LoanApplication[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
 
-    const fetchApprovedLoans = () => {
+    const fetchApprovedLoans = async () => {
          try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            setCustomers(storedCustomers);
-            const storedApproved = JSON.parse(localStorage.getItem('jls_approved_loans') || '[]');
-            setApprovedLoans(storedApproved);
+            const customersCollection = collection(db, 'customers');
+            const customerSnapshot = await getDocs(customersCollection);
+            const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customerList);
+
+            const appsCollection = collection(db, 'loanApplications');
+            const appsSnapshot = await getDocs(appsCollection);
+            const appsList = appsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as LoanApplication));
+            setApprovedLoans(appsList.filter(app => app.status === 'approved'));
+
         } catch (e) {
-            console.error("Failed to parse data from localStorage", e);
+            console.error("Failed to parse data from Firestore", e);
         }
     };
 
@@ -238,7 +239,7 @@ export default function LoanDisbursalPage() {
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            {customer && <DisburseLoanDialog loan={loan} customer={customer} onDisbursed={fetchApprovedLoans} />}
+                                            {customer && <DisburseLoanDialog loanApp={loan} customer={customer} onDisbursed={fetchApprovedLoans} />}
                                         </TableCell>
                                     </TableRow>
                                 )})}
@@ -250,5 +251,3 @@ export default function LoanDisbursalPage() {
         </Card>
     );
 }
-
-    

@@ -8,6 +8,8 @@ import { Button } from './ui/button';
 import { FileText, CreditCard, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import type { Customer } from '@/app/dashboard/customers/page';
 import type { Loan, TopUp } from '@/app/dashboard/loans/all/page';
 
@@ -19,7 +21,7 @@ export type Emi = {
   id: string;
   loanId: string;
   installment: number;
-  dueDate: string;
+  dueDate: Timestamp;
   amount: number;
   status: 'paid' | 'unpaid';
 };
@@ -27,8 +29,25 @@ export type Emi = {
 
 interface LoanDocumentsProps {
     customer: Customer;
-    loan: Loan & { id: string };
+    loan: Loan;
 }
+
+const toDate = (date: Date | Timestamp) => {
+    return date instanceof Timestamp ? date.toDate() : date;
+}
+
+// Helper function to fetch image as base64
+const getImageAsBase64 = async (url: string): Promise<string> => {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+};
+
 
 const generateEmiScheduleData = (loanId: string, allEmis: Emi[]) => {
     return allEmis
@@ -36,41 +55,11 @@ const generateEmiScheduleData = (loanId: string, allEmis: Emi[]) => {
         .sort((a,b) => a.installment - b.installment)
         .map(e => ({
             month: e.installment,
-            dueDate: new Date(e.dueDate).toLocaleDateString(),
+            dueDate: toDate(e.dueDate).toLocaleDateString(),
             amount: e.amount.toFixed(2),
             status: e.status.charAt(0).toUpperCase() + e.status.slice(1)
         }));
 };
-
-const getOriginalLoanDetails = (loan: Loan & {id: string}) => {
-    if (!loan.topupHistory || loan.topupHistory.length === 0) {
-        return loan;
-    }
-    // The original loan details are what's left after reverse-calculating the top-ups
-    let currentAmount = loan.amount;
-    let currentTenure = loan.tenure;
-    let currentInterest = loan.interestRate;
-    let currentDisbursalDate = loan.disbursalDate;
-
-    // This is a simplification; a real system would store original values explicitly.
-    // Let's assume the first entry in history contains enough info to guess the original.
-    // For this implementation, we will assume the PDF shows the *final* state after topups.
-    // To show original state, we would need to store the original loan terms separately.
-    // The most reliable original details would be the ones from the first disbursal.
-    // We can't derive it perfectly without storing it. We'll store it on the first topup.
-    
-    // For now, let's assume the first entry in topup history can tell us something
-    // But a better approach is to show the initial state, then topups.
-    
-    // Let's find the original loan from all loans before it was modified
-    const allLoans: (Loan & {id:string})[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-    const originalLoan = allLoans.find(l => l.id === loan.id); // This will be the *current* state.
-
-    // This is tricky. Let's adjust the PDF generation to be more explicit about history.
-    // The loan object passed in IS the current state. We must display its history.
-    return loan;
-};
-
 
 export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const { toast } = useToast();
@@ -78,16 +67,16 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const [allEmis, setAllEmis] = useState<Emi[]>([]);
     
     useEffect(() => {
-        try {
-            const storedEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-            setAllEmis(storedEmis);
-        } catch (e) {
-            console.error("Failed to load EMIs from localStorage", e)
+        if (loan && loan.id) {
+            const fetchEmis = async () => {
+                const q = query(collection(db, "emis"), where("loanId", "==", loan.id));
+                const querySnapshot = await getDocs(q);
+                const loanEmis = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}) as Emi);
+                setAllEmis(loanEmis);
+            }
+            fetchEmis();
         }
-    }, [])
-
-    const customerPhoto = customer.photo || 'https://placehold.co/150x150.png';
-
+    }, [loan])
 
     const addWatermark = (doc: jsPDF) => {
         const pageCount = (doc as any).internal.getNumberOfPages();
@@ -106,7 +95,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         }
     };
 
-    const generatePdf = (type: 'agreement' | 'card') => {
+    const generatePdf = async (type: 'agreement' | 'card') => {
         if (!customer) {
             toast({
                 variant: "destructive",
@@ -120,34 +109,41 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
             
+            // Add Logo
+            const logoUrl = 'https://i.ibb.co/mSqkZJ4/JLS-FINANCE.png';
+            const logoBase64 = await getImageAsBase64(logoUrl);
+            doc.addImage(logoBase64, 'PNG', doc.internal.pageSize.getWidth() / 2 - 35, 10, 70, 20);
+
             // Header
-            doc.setFont('helvetica', 'bold');
-            doc.setFontSize(20);
-            doc.text("JLS FINANCE LTD", doc.internal.pageSize.getWidth() / 2, 20, { align: 'center' });
             doc.setFontSize(14);
             doc.setFont('helvetica', 'normal');
-            doc.text(type === 'agreement' ? "Loan Agreement" : "Loan Card", doc.internal.pageSize.getWidth() / 2, 28, { align: 'center' });
+            doc.text(type === 'agreement' ? "Loan Agreement" : "Loan Card", doc.internal.pageSize.getWidth() / 2, 38, { align: 'center' });
             doc.setLineWidth(0.5);
-            doc.line(20, 32, doc.internal.pageSize.getWidth() - 20, 32);
+            doc.line(20, 42, doc.internal.pageSize.getWidth() - 20, 42);
 
             // Customer Details Section
+            let startY = 52;
             doc.setFontSize(12);
             doc.setFont('helvetica', 'bold');
-            doc.text("Customer Details", 20, 42);
+            doc.text("Customer Details", 20, startY);
 
-            try {
-              doc.addImage(customerPhoto, 'PNG', 150, 45, 40, 40);
-            } catch (e) {
-              console.error("Error adding image to PDF:", e);
+            const customerPhotoBase64 = customer.photo ? await getImageAsBase64(customer.photo) : null;
+            if(customerPhotoBase64) {
+                 try {
+                  doc.addImage(customerPhotoBase64, 'JPEG', 150, startY + 5, 40, 40);
+                } catch (e) {
+                  console.error("Error adding customer image to PDF:", e);
+                }
             }
             
+            startY += 8;
             doc.setFont('helvetica', 'normal');
-            doc.text(`Customer Name: ${customer.name}`, 20, 50);
-            doc.text(`Customer ID: ${customer.id}`, 20, 56);
-            doc.text(`Phone Number: ${customer.phone}`, 20, 62);
-            doc.text(`Address: ${customer.address}`, 20, 68, { maxWidth: 120 });
+            doc.text(`Customer Name: ${customer.name}`, 20, startY); startY += 6;
+            doc.text(`Customer ID: ${customer.id}`, 20, startY); startY += 6;
+            doc.text(`Phone Number: ${customer.phone}`, 20, startY); startY += 6;
+            doc.text(`Address: ${customer.address}`, 20, startY, { maxWidth: 120 });
             
-            let finalY = 95;
+            let finalY = startY + 20;
 
             // Original Loan Details
             doc.setFont('helvetica', 'bold');
@@ -158,7 +154,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text(`Total Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, finalY); finalY += 6;
             doc.text(`Final Interest Rate: ${loan.interestRate}% p.a.`, 20, finalY); finalY += 6;
             doc.text(`Final Tenure: ${loan.tenure} months`, 20, finalY); finalY += 6;
-            doc.text(`Last Transaction Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, finalY);
+            doc.text(`Last Transaction Date: ${toDate(loan.disbursalDate).toLocaleDateString()}`, 20, finalY);
             finalY += 10;
             
             if (loan.topupHistory && loan.topupHistory.length > 0) {
@@ -174,7 +170,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
                     doc.setFont('helvetica', 'bold');
                     doc.text(`Net Disbursed: Rs. ${netDisbursed.toLocaleString()}`, 20, finalY); finalY += 6;
                     doc.setFont('helvetica', 'normal');
-                    doc.text(`Transaction Date: ${new Date(topup.topupDate).toLocaleDateString()}`, 20, finalY); finalY += 6;
+                    doc.text(`Transaction Date: ${toDate(topup.topupDate).toLocaleDateString()}`, 20, finalY); finalY += 6;
                     doc.text(`Terms at Top-up: ${topup.interestRate}% for ${topup.tenure} months`, 20, finalY);
                     finalY += 10;
                 });
@@ -293,42 +289,45 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     );
 }
 
-export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, customer: Customer) => {
+export const generateEmiReceipt = async (emi: Emi, loan: Loan, customer: Customer) => {
     try {
         const doc = new jsPDF() as jsPDFWithAutoTable;
 
+        // Add Logo
+        const logoUrl = 'https://i.ibb.co/mSqkZJ4/JLS-FINANCE.png';
+        const logoBase64 = await getImageAsBase64(logoUrl);
+        doc.addImage(logoBase64, 'PNG', doc.internal.pageSize.getWidth() / 2 - 35, 10, 70, 20);
+
+
         // Header
-        doc.setFont('helvetica', 'bold');
-        doc.setFontSize(20);
-        doc.text("JLS FINANCE LTD", doc.internal.pageSize.getWidth() / 2, 20, { align: 'center' });
         doc.setFontSize(14);
         doc.setFont('helvetica', 'normal');
-        doc.text("EMI Payment Receipt", doc.internal.pageSize.getWidth() / 2, 28, { align: 'center' });
+        doc.text("EMI Payment Receipt", doc.internal.pageSize.getWidth() / 2, 38, { align: 'center' });
         doc.setLineWidth(0.5);
-        doc.line(20, 32, doc.internal.pageSize.getWidth() - 20, 32);
+        doc.line(20, 42, doc.internal.pageSize.getWidth() - 20, 42);
 
         // Receipt Details
         doc.setFontSize(12);
         const receiptDate = new Date().toLocaleDateString();
-        doc.text(`Date: ${receiptDate}`, 150, 42);
-        doc.text(`Receipt No: ${emi.id}`, 20, 42);
+        doc.text(`Date: ${receiptDate}`, 150, 52);
+        doc.text(`Receipt No: ${emi.id}`, 20, 52);
         
         doc.setFont('helvetica', 'bold');
-        doc.text("Payment Details", 20, 55);
+        doc.text("Payment Details", 20, 65);
         doc.setFont('helvetica', 'normal');
         
         const data = [
             ['Received From:', customer.name],
             ['Customer ID:', customer.id!],
-            ['Loan ID:', loan.id],
+            ['Loan ID:', loan.id!],
             ['Payment For:', `Installment No. ${emi.installment}`],
             ['Amount Paid:', `Rs. ${emi.amount.toLocaleString()}`],
-            ['Due Date:', new Date(emi.dueDate).toLocaleDateString()],
+            ['Due Date:', toDate(emi.dueDate).toLocaleDateString()],
             ['Payment Status:', 'Paid'],
         ];
 
         doc.autoTable({
-            startY: 60,
+            startY: 70,
             body: data,
             theme: 'plain',
             styles: { fontSize: 11, cellPadding: 2 },
@@ -347,7 +346,3 @@ export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, custom
         return false;
     }
 };
-
-
-
-

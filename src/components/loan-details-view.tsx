@@ -15,35 +15,45 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Eye, Download } from 'lucide-react';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import type { Loan, TopUp } from '@/app/dashboard/loans/all/page';
 import type { Customer } from '@/app/dashboard/customers/page';
-import type { Emi } from '@/components/loan-documents';
-import { generateEmiReceipt } from '@/components/loan-documents';
+import { generateEmiReceipt, Emi } from '@/components/loan-documents';
 import { useToast } from '@/hooks/use-toast';
 import { Separator } from './ui/separator';
 
-
 interface LoanDetailsViewProps {
-  loan: Loan & { id: string };
+  loan: Loan;
   customer: Customer;
 }
+
+const toDate = (date: Date | Timestamp) => {
+    return date instanceof Timestamp ? date.toDate() : date;
+}
+
 
 export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
   const [emis, setEmis] = useState<Emi[]>([]);
   const { toast } = useToast();
 
   useEffect(() => {
-    if (loan) {
-      const allEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]') as Emi[];
-      const loanEmis = allEmis.filter(e => e.loanId === loan.id).sort((a,b) => a.installment - b.installment);
-      setEmis(loanEmis);
+    if (loan && loan.id) {
+      const fetchEmis = async () => {
+          const q = query(collection(db, "emis"), where("loanId", "==", loan.id));
+          const querySnapshot = await getDocs(q);
+          const loanEmis = querySnapshot.docs.map(doc => ({id: doc.id, ...doc.data()}) as Emi)
+            .sort((a,b) => a.installment - b.installment);
+          setEmis(loanEmis);
+      }
+      fetchEmis();
     }
   }, [loan]);
   
-  const handleDownloadReceipt = (emi: Emi) => {
-    const success = generateEmiReceipt(emi, loan, customer);
+  const handleDownloadReceipt = async (emi: Emi) => {
+    const success = await generateEmiReceipt(emi, loan, customer);
     if(success) {
-      toast({ title: 'Receipt Downloaded', description: `Receipt for EMI ${emi.id} has been saved.` });
+      toast({ title: 'Receipt Downloaded', description: `Receipt for EMI Installment ${emi.installment} has been saved.` });
     } else {
       toast({ variant: 'destructive', title: 'Download Failed', description: 'Could not generate the EMI receipt.' });
     }
@@ -80,7 +90,7 @@ export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
                     <p><strong>Total Principal:</strong> Rs. {(loan.amount || 0).toLocaleString()}</p>
                     <p><strong>Interest Rate:</strong> {loan.interestRate}% p.a.</p>
                     <p><strong>Tenure:</strong> {loan.tenure} months</p>
-                    <p><strong>Effective Date:</strong> {new Date(loan.disbursalDate).toLocaleDateString()}</p>
+                    <p><strong>Effective Date:</strong> {toDate(loan.disbursalDate).toLocaleDateString()}</p>
                     <p><strong>Processing Fee:</strong> Rs. {(loan.processingFee || 0).toLocaleString()}</p>
                  </div>
             </div>
@@ -97,7 +107,7 @@ export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
                             const processingFee = topup.processingFee || 0;
                             return (
                                 <div key={topup.id || `tu-${index}`} className="p-4 rounded-lg border bg-muted/50">
-                                    <h5 className="font-semibold mb-2">Top-up Transaction #{index + 1} on {new Date(topup.topupDate).toLocaleDateString()}</h5>
+                                    <h5 className="font-semibold mb-2">Top-up Transaction #{index + 1} on {toDate(topup.topupDate).toLocaleDateString()}</h5>
                                     <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2 text-sm">
                                         <p><strong>Top-up Amount:</strong> Rs. {topupAmount.toLocaleString()}</p>
                                         <p><strong>Processing Fee:</strong> Rs. {processingFee.toLocaleString()}</p>
@@ -132,7 +142,7 @@ export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
                     {emis.map((emi) => (
                         <TableRow key={emi.id}>
                             <TableCell>{emi.installment}</TableCell>
-                            <TableCell>{new Date(emi.dueDate).toLocaleDateString()}</TableCell>
+                            <TableCell>{toDate(emi.dueDate).toLocaleDateString()}</TableCell>
                             <TableCell>Rs. {emi.amount.toLocaleString()}</TableCell>
                             <TableCell>
                                  <Badge variant={emi.status === 'paid' ? 'default' : 'secondary'} className={emi.status === 'paid' ? 'bg-green-600' : 'bg-red-500'}>

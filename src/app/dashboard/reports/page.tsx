@@ -10,7 +10,8 @@ import { FileDown, FileText } from 'lucide-react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import type { jsPDF as jsPDFType } from 'jspdf';
-
+import { collection, getDocs, Timestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 import type { Customer } from '@/app/dashboard/customers/page';
 import type { Loan } from '@/app/dashboard/loans/all/page';
 
@@ -22,7 +23,7 @@ type Emi = {
   id: string;
   loanId: string;
   installment: number;
-  dueDate: string;
+  dueDate: Timestamp;
   amount: number;
   status: 'paid' | 'unpaid';
 };
@@ -54,7 +55,7 @@ const getYears = () => {
 
 export default function ReportsPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
-    const [loans, setLoans] = useState<(Loan & { id: string })[]>([]);
+    const [loans, setLoans] = useState<Loan[]>([]);
     const [emis, setEmis] = useState<Emi[]>([]);
     const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
@@ -62,21 +63,32 @@ export default function ReportsPage() {
     const years = getYears();
 
     useEffect(() => {
-        try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-            const storedEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-            setCustomers(storedCustomers);
-            setLoans(storedLoans);
-            setEmis(storedEmis);
-        } catch (error) {
-            console.error("Failed to load data from localStorage", error);
-        }
+        const fetchData = async () => {
+            try {
+                const customersCollection = collection(db, 'customers');
+                const customerSnapshot = await getDocs(customersCollection);
+                const customerList = customerSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+                setCustomers(customerList);
+
+                const loansCollection = collection(db, 'loans');
+                const loanSnapshot = await getDocs(loansCollection);
+                const loanList = loanSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Loan));
+                setLoans(loanList);
+
+                const emisCollection = collection(db, 'emis');
+                const emiSnapshot = await getDocs(emisCollection);
+                const emiList = emiSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Emi));
+                setEmis(emiList);
+            } catch (error) {
+                console.error("Failed to load data from Firestore", error);
+            }
+        };
+        fetchData();
     }, []);
 
     const handleGenerateReport = () => {
         const dueEmis = emis.filter(emi => {
-            const dueDate = new Date(emi.dueDate);
+            const dueDate = emi.dueDate.toDate();
             return dueDate.getMonth() === selectedMonth && dueDate.getFullYear() === selectedYear;
         });
 
@@ -92,7 +104,7 @@ export default function ReportsPage() {
                 phone: customer.phone,
                 emiAmount: emi.amount,
                 installment: emi.installment,
-                loanId: loan.id
+                loanId: loan.id!
             };
         }).filter(Boolean) as ReportRow[];
 
