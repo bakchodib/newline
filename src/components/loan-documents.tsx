@@ -5,11 +5,11 @@ import React, { useState, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Button } from './ui/button';
-import { FileText, CreditCard, Loader2, Download } from 'lucide-react';
+import { FileText, CreditCard, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import type { Customer } from '@/app/dashboard/customers/page';
-import type { Loan } from '@/app/dashboard/loans/all/page';
+import type { Loan, TopUp } from '@/app/dashboard/loans/all/page';
 
 interface jsPDFWithAutoTable extends jsPDF {
   autoTable: (options: any) => jsPDF;
@@ -30,30 +30,45 @@ interface LoanDocumentsProps {
     loan: Loan & { id: string };
 }
 
-const generateEmiScheduleData = (amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
-    const monthlyRate = annualRate / 12 / 100;
-    const emi = (amount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
-    let balance = amount;
-    const schedule = [];
+const generateEmiScheduleData = (loanId: string, allEmis: Emi[]) => {
+    return allEmis
+        .filter(e => e.loanId === loanId)
+        .sort((a,b) => a.installment - b.installment)
+        .map(e => ({
+            month: e.installment,
+            dueDate: new Date(e.dueDate).toLocaleDateString(),
+            amount: e.amount.toFixed(2),
+            status: e.status.charAt(0).toUpperCase() + e.status.slice(1)
+        }));
+};
 
-    for (let i = 1; i <= tenureMonths; i++) {
-        const dueDate = new Date(startDate);
-        dueDate.setMonth(startDate.getMonth() + i);
-
-        const interest = balance * monthlyRate;
-        const principal = emi - interest;
-        balance -= principal;
-
-        schedule.push({
-            month: i,
-            dueDate: dueDate.toLocaleDateString(),
-            amount: emi.toFixed(2),
-            principal: principal.toFixed(2),
-            interest: interest.toFixed(2),
-            balance: balance.toFixed(2),
-        });
+const getOriginalLoanDetails = (loan: Loan & {id: string}) => {
+    if (!loan.topupHistory || loan.topupHistory.length === 0) {
+        return loan;
     }
-    return schedule;
+    // The original loan details are what's left after reverse-calculating the top-ups
+    let currentAmount = loan.amount;
+    let currentTenure = loan.tenure;
+    let currentInterest = loan.interestRate;
+    let currentDisbursalDate = loan.disbursalDate;
+
+    // This is a simplification; a real system would store original values explicitly.
+    // Let's assume the first entry in history contains enough info to guess the original.
+    // For this implementation, we will assume the PDF shows the *final* state after topups.
+    // To show original state, we would need to store the original loan terms separately.
+    // The most reliable original details would be the ones from the first disbursal.
+    // We can't derive it perfectly without storing it. We'll store it on the first topup.
+    
+    // For now, let's assume the first entry in topup history can tell us something
+    // But a better approach is to show the initial state, then topups.
+    
+    // Let's find the original loan from all loans before it was modified
+    const allLoans: (Loan & {id:string})[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
+    const originalLoan = allLoans.find(l => l.id === loan.id); // This will be the *current* state.
+
+    // This is tricky. Let's adjust the PDF generation to be more explicit about history.
+    // The loan object passed in IS the current state. We must display its history.
+    return loan;
 };
 
 
@@ -105,9 +120,6 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
             
-            const emiScheduleData = generateEmiScheduleData(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
-            const netDisbursedAmount = loan.amount - (loan.processingFee || 0);
-
             // Header
             doc.setFont('helvetica', 'bold');
             doc.setFontSize(20);
@@ -135,46 +147,54 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text(`Phone Number: ${customer.phone}`, 20, 62);
             doc.text(`Address: ${customer.address}`, 20, 68, { maxWidth: 120 });
             
-            // Loan Details Section
             let finalY = 95;
+
+            // Original Loan Details
             doc.setFont('helvetica', 'bold');
-            doc.text("Loan Details", 20, finalY);
+            doc.text("Loan Details (Post-Topup)", 20, finalY);
             finalY += 8;
             doc.setFont('helvetica', 'normal');
-            doc.text(`Loan ID: ${loan.id}`, 20, finalY);
-            finalY += 6;
-            doc.text(`Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, finalY);
-            finalY += 6;
-            doc.text(`Processing Fee: Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 20, finalY);
-            finalY += 6;
-            doc.setFont('helvetica', 'bold');
-            doc.text(`Net Disbursed Amount: Rs. ${netDisbursedAmount.toLocaleString()}`, 20, finalY);
-            finalY += 6;
-            doc.setFont('helvetica', 'normal');
-            doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, finalY);
-            finalY += 6;
-            doc.text(`Tenure: ${loan.tenure} months`, 20, finalY);
-            finalY += 6;
-            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, finalY);
-            
+            doc.text(`Loan ID: ${loan.id}`, 20, finalY); finalY += 6;
+            doc.text(`Total Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, finalY); finalY += 6;
+            doc.text(`Final Interest Rate: ${loan.interestRate}% p.a.`, 20, finalY); finalY += 6;
+            doc.text(`Final Tenure: ${loan.tenure} months`, 20, finalY); finalY += 6;
+            doc.text(`Last Transaction Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, finalY);
             finalY += 10;
+            
+            if (loan.topupHistory && loan.topupHistory.length > 0) {
+                loan.topupHistory.forEach((topup, index) => {
+                    doc.setFont('helvetica', 'bold');
+                    doc.text(`Top-up Transaction #${index + 1}`, 20, finalY);
+                    finalY += 8;
+                    doc.setFont('helvetica', 'normal');
+                    const netDisbursed = topup.topupAmount - topup.processingFee;
+                    doc.text(`Top-up ID: ${topup.id}`, 20, finalY); finalY += 6;
+                    doc.text(`Top-up Amount: Rs. ${topup.topupAmount.toLocaleString()}`, 20, finalY); finalY += 6;
+                    doc.text(`Processing Fee: Rs. ${topup.processingFee.toLocaleString()}`, 20, finalY); finalY += 6;
+                    doc.setFont('helvetica', 'bold');
+                    doc.text(`Net Disbursed: Rs. ${netDisbursed.toLocaleString()}`, 20, finalY); finalY += 6;
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`Transaction Date: ${new Date(topup.topupDate).toLocaleDateString()}`, 20, finalY); finalY += 6;
+                    doc.text(`Terms at Top-up: ${topup.interestRate}% for ${topup.tenure} months`, 20, finalY);
+                    finalY += 10;
+                });
+            }
 
             // EMI Schedule Table
             doc.setFont('helvetica', 'bold');
-            doc.text("EMI Schedule", 20, finalY);
+            doc.text("Consolidated EMI Schedule", 20, finalY);
             finalY += 5;
 
-            const tableHeaders = ['Month', 'Due Date', 'EMI (Rs.)', 'Principal', 'Interest', 'Balance'];
+            const tableHeaders = ['Installment', 'Due Date', 'EMI (Rs.)'];
             if(type === 'card'){
                 tableHeaders.push('Status');
             }
-
-            const loanEmisForLoan = allEmis.filter(e => e.loanId === loan.id);
+            
+            const emiScheduleData = generateEmiScheduleData(loan.id!, allEmis);
             const tableBody = emiScheduleData.map(emi => {
-                 const emiData = [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance];
+                 const emiData = [emi.month, emi.dueDate, emi.amount];
                  if (type === 'card') {
-                    const emiRecord = loanEmisForLoan.find(e => e.installment === emi.month);
-                    emiData.push(emiRecord ? emiRecord.status.charAt(0).toUpperCase() + emiRecord.status.slice(1) : 'Unpaid');
+                    emiData.push(emi.status);
                  }
                  return emiData;
             });
@@ -327,6 +347,7 @@ export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, custom
         return false;
     }
 };
+
 
 
 
