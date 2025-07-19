@@ -116,7 +116,9 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
         resolver: zodResolver(topUpFormSchema),
         defaultValues: { topUpDate: new Date(), newTenure: loan.tenure }
     });
-     const { register, control, handleSubmit, formState: { errors, isSubmitting } } = form;
+     const { register, control, handleSubmit, formState: { errors, isSubmitting }, watch } = form;
+     const topUpAmountValue = watch('topUpAmount') || 0;
+
 
     useEffect(() => {
         if (!isOpen) return;
@@ -211,7 +213,7 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
                     </div>
                     <div>
                         <Label>New Total Principal</Label>
-                        <Input readOnly disabled value={`Rs. ${(outstandingPrincipal + (form.watch('topUpAmount') || 0)).toLocaleString()}`} />
+                        <Input readOnly disabled value={`Rs. ${(outstandingPrincipal + Number(topUpAmountValue)).toLocaleString()}`} />
                     </div>
                      <div>
                         <Label htmlFor="newTenure">New Tenure (Months)</Label>
@@ -631,5 +633,7 @@ export default function AllLoansPage() {
         </div>
     );
 }
+
+    
 
     
