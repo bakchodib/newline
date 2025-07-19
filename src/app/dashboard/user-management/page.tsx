@@ -6,9 +6,7 @@ import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PlusCircle, Trash2 } from 'lucide-react';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { db, auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -58,7 +56,7 @@ const userSchema = z.object({
   role: z.enum(['admin', 'agent', 'customer']),
 });
 
-export type User = z.infer<typeof userSchema> & { id: string };
+export type User = z.infer<typeof userSchema> & { id: string, authUid: string };
 
 const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -69,20 +67,27 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 
   const onSubmit = async (data: z.infer<typeof userSchema>) => {
     try {
-      // Step 1: Create user in Firebase Authentication
-      const userCredential = await createUserWithEmailAndPassword(auth, data.loginId, data.password);
-      const firebaseUser = userCredential.user;
-
-      if (!firebaseUser) {
-        throw new Error("Firebase Auth user creation failed.");
-      }
-
-      // Step 2: Save user profile to Firestore, but without the password
-      const { password, ...userData } = data;
-      await addDoc(collection(db, "users"), {
-        ...userData,
-        authUid: firebaseUser.uid // Link Firestore doc to Auth user
+      // Step 1: Create user in Supabase Authentication
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: data.loginId,
+        password: data.password,
       });
+
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("Supabase Auth user creation failed.");
+      
+      const supabaseUser = authData.user;
+
+      // Step 2: Save user profile to our public 'users' table
+      const { password, ...userData } = data;
+      const { error: dbError } = await supabase
+        .from('users')
+        .insert({
+          ...userData,
+          authUid: supabaseUser.id // Link profile to Auth user
+        });
+
+      if (dbError) throw dbError;
 
       toast({ title: "User Added", description: `User ${data.name} has been created.` });
       onUserAdded();
@@ -90,17 +95,7 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
       setIsOpen(false);
     } catch (e: any) {
       console.error("Error adding user:", e);
-      let description = "Failed to add user. Please check the console for details.";
-      if (e.code === 'auth/email-already-in-use') {
-        description = "This email address is already in use by another account.";
-      } else if (e.code === 'auth/weak-password') {
-        description = "The password is too weak. Please use at least 6 characters.";
-      } else if (e.code === 'auth/invalid-email') {
-        description = "The email address is not valid.";
-      } else if (e.code === 'auth/operation-not-allowed') {
-        description = "Email/password sign-up is not enabled. Please enable it in the Firebase console.";
-      }
-      toast({ variant: 'destructive', title: "Registration Failed", description });
+      toast({ variant: 'destructive', title: "Registration Failed", description: e.message });
     }
   };
 
@@ -164,18 +159,18 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
   );
 };
 
-const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUserUpdated: () => void, onUserDeleted: (id: string) => void }) => {
+const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUserUpdated: () => void, onUserDeleted: (user: User) => void }) => {
     const { toast } = useToast();
 
     const handleRoleChange = async (userId: string, newRole: 'admin' | 'agent' | 'customer') => {
         try {
-            const userRef = doc(db, "users", userId);
-            await updateDoc(userRef, { role: newRole });
+            const { error } = await supabase.from('users').update({ role: newRole }).eq('id', userId);
+            if (error) throw error;
             toast({ title: 'Role Updated', description: `User role has been changed to ${newRole}.` });
             onUserUpdated();
-        } catch(e) {
+        } catch(e: any) {
             console.error("Error updating role:", e);
-            toast({ variant: 'destructive', title: 'Error', description: 'Failed to update user role.' });
+            toast({ variant: 'destructive', title: 'Error', description: e.message || 'Failed to update user role.' });
         }
     };
     
@@ -227,7 +222,7 @@ const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUs
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
                                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => onUserDeleted(user.id)} className="bg-destructive hover:bg-destructive/90">
+                                            <AlertDialogAction onClick={() => onUserDeleted(user)} className="bg-destructive hover:bg-destructive/90">
                                                 Delete
                                             </AlertDialogAction>
                                         </AlertDialogFooter>
@@ -249,12 +244,12 @@ export default function UserManagementPage() {
 
     const fetchUsers = useCallback(async () => {
         try {
-            const querySnapshot = await getDocs(collection(db, "users"));
-            const userList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
-            setUsers(userList);
-        } catch (e) {
+            const { data, error } = await supabase.from('users').select('*');
+            if (error) throw error;
+            setUsers(data as User[]);
+        } catch (e: any) {
             console.error("Failed to fetch users", e);
-            toast({ variant: 'destructive', title: 'Error', description: 'Could not load user data.' });
+            toast({ variant: 'destructive', title: 'Error', description: e.message || 'Could not load user data.' });
         }
     }, [toast]);
 
@@ -262,17 +257,18 @@ export default function UserManagementPage() {
         fetchUsers();
     }, [fetchUsers]);
 
-    const handleUserDeleted = async (id: string) => {
-        // Note: Deleting a Firebase Auth user requires re-authentication or server-side logic (Cloud Function).
-        // This client-side delete will only remove the user from the Firestore database.
+    const handleUserDeleted = async (user: User) => {
+        // Deleting a Supabase Auth user requires a special admin client, which should be done in a secure backend environment (e.g., a Supabase Edge Function).
+        // This client-side delete will only remove the user from the 'users' table.
         // For a full implementation, a backend function is recommended to delete the Auth user.
         try {
-            await deleteDoc(doc(db, "users", id));
-            toast({ title: 'User Deleted', description: `User profile has been removed from the database.`, variant: 'destructive' });
+            const { error } = await supabase.from('users').delete().eq('id', user.id);
+            if (error) throw error;
+            toast({ title: 'User Deleted', description: `User profile for ${user.name} has been removed. The Auth record still exists.`, variant: 'destructive' });
             fetchUsers(); // Refresh the list
-        } catch (e) {
+        } catch (e: any) {
              console.error("Error deleting user: ", e);
-             toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete user profile.' });
+             toast({ variant: 'destructive', title: 'Error', description: e.message || 'Failed to delete user profile.' });
         }
     };
 

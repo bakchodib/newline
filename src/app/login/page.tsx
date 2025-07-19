@@ -4,9 +4,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AtSign, Lock, LogIn } from "lucide-react";
-import { collection, query, where, getDocs } from "firebase/firestore";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { db, auth } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -25,75 +23,76 @@ import { Logo } from "@/components/icons/logo";
 export default function LoginPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [loginId, setLoginId] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // Check if user is already logged in
-    if (localStorage.getItem("jls_user")) {
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
         router.push('/dashboard');
-    }
+      }
+    };
+    checkUser();
   }, [router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!loginId || !password) {
+    if (!email || !password) {
         toast({
             variant: "destructive",
             title: "Validation Error",
-            description: "Login ID and password are required.",
+            description: "Email and password are required.",
         });
         return;
     }
     setIsLoading(true);
 
     try {
-        // Step 1: Authenticate with Firebase Auth
-        const userCredential = await signInWithEmailAndPassword(auth, loginId, password);
-        const firebaseUser = userCredential.user;
-
-        if (!firebaseUser) {
-            throw new Error("Authentication failed.");
-        }
-        
-        // Step 2: Fetch user profile from Firestore
-        const usersRef = collection(db, "users");
-        const q = query(usersRef, where("loginId", "==", loginId));
-        const querySnapshot = await getDocs(q);
-
-        if (querySnapshot.empty) {
-            throw new Error("User profile not found in database.");
-        }
-
-        const userDoc = querySnapshot.docs[0];
-        const user = userDoc.data();
-
-        toast({
-        title: "Login Successful",
-        description: `Welcome back, ${user.name}!`,
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
         });
+
+        if (error) throw error;
         
-        // Store user session info
-        const userData = {
-            id: userDoc.id,
-            loginId: user.loginId,
-            name: user.name,
-            role: user.role,
-        };
-        localStorage.setItem("jls_user", JSON.stringify(userData));
-        router.push("/dashboard");
+        if (data.user) {
+          // Fetch user profile from your 'users' table
+          const { data: userProfile, error: profileError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('authUid', data.user.id)
+            .single();
+          
+          if(profileError) throw profileError;
+
+          toast({
+            title: "Login Successful",
+            description: `Welcome back, ${userProfile.name}!`,
+          });
+
+          // Store user session info
+          const userData = {
+              id: userProfile.id,
+              loginId: userProfile.loginId,
+              name: userProfile.name,
+              role: userProfile.role,
+              authUid: data.user.id,
+          };
+          localStorage.setItem("jls_user", JSON.stringify(userData));
+          router.push("/dashboard");
+
+        } else {
+            throw new Error("Login failed, no user data returned.");
+        }
 
     } catch (error: any) {
         console.error("Login failed:", error);
-        let description = "Invalid credentials. Please try again.";
-        if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-            description = "Invalid email or password.";
-        }
         toast({
             variant: "destructive",
             title: "Login Failed",
-            description: description,
+            description: error.message || "Invalid credentials. Please try again.",
         });
     } finally {
         setIsLoading(false);
@@ -111,7 +110,7 @@ export default function LoginPage() {
             Welcome Back
           </CardTitle>
           <CardDescription>
-            Log in to your JLS Finance account. Login ID must be an email.
+            Log in to your JLS Finance account.
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
@@ -125,8 +124,8 @@ export default function LoginPage() {
                   type="email"
                   placeholder="e.g., admin@jls.com"
                   required
-                  value={loginId}
-                  onChange={(e) => setLoginId(e.target.value)}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
                   className="pl-10"
                   disabled={isLoading}
                 />

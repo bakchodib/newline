@@ -7,9 +7,8 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2, Edit } from 'lucide-react';
 import Image from 'next/image';
-import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
 
-import { db, auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -178,7 +177,8 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
   }
 
   const onSubmit = async (data: Customer) => {
-    if (!auth.currentUser) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
         toast({
             variant: "destructive",
             title: "Authentication Error",
@@ -188,7 +188,9 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
     }
 
     try {
-        await addDoc(collection(db, "customers"), data);
+        const { error } = await supabase.from('customers').insert([data]);
+        if (error) throw error;
+        
         onCustomerAdded();
         toast({ title: "Success", description: "Customer registered successfully." });
         reset();
@@ -196,11 +198,7 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
         setIsOpen(false);
     } catch (error: any) {
         console.error("Error adding customer: ", error);
-        let description = "Failed to register customer. An unknown error occurred.";
-        if (error.code === 'permission-denied') {
-            description = "You do not have permission to add customers. Please check your login or contact an admin.";
-        }
-        toast({ variant: "destructive", title: "Registration Error", description });
+        toast({ variant: "destructive", title: "Registration Error", description: error.message || "Failed to register customer." });
     }
   };
 
@@ -370,14 +368,16 @@ const EditCustomerDialog = ({ customer, onCustomerUpdated }: { customer: Custome
         return;
     }
     try {
-        const customerRef = doc(db, "customers", customer.id);
-        await updateDoc(customerRef, data);
+        const { id, ...customerData } = data;
+        const { error } = await supabase.from('customers').update(customerData).eq('id', customer.id);
+        if (error) throw error;
+
         onCustomerUpdated();
         toast({ title: "Success", description: "Customer details updated successfully." });
         setIsOpen(false);
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error updating customer: ", error);
-        toast({ variant: "destructive", title: "Error", description: "Failed to update customer details." });
+        toast({ variant: "destructive", title: "Error", description: error.message || "Failed to update customer details." });
     }
   };
 
@@ -608,12 +608,12 @@ export default function CustomersPage() {
     const fetchCustomers = useCallback(async () => {
         setIsLoading(true);
         try {
-            const querySnapshot = await getDocs(collection(db, "customers"));
-            const customersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
-            setCustomers(customersData);
-        } catch (e) {
-            console.error("Failed to fetch customers from Firestore", e);
-            toast({ variant: "destructive", title: "Error", description: "Could not load customer data." });
+            const { data, error } = await supabase.from('customers').select('*');
+            if (error) throw error;
+            setCustomers(data as Customer[]);
+        } catch (e: any) {
+            console.error("Failed to fetch customers from Supabase", e);
+            toast({ variant: "destructive", title: "Error", description: e.message || "Could not load customer data." });
             setCustomers([]);
         } finally {
             setIsLoading(false);
@@ -628,27 +628,27 @@ export default function CustomersPage() {
     
     const handleDeleteCustomer = async (id: string) => {
         try {
-            const batch = writeBatch(db);
+            // In a real app, you would use an RPC function in Supabase to delete related records in a transaction.
+            // For simplicity here, we'll delete from each table.
+
+            // Find loans associated with the customer
+            const { data: loansToDelete, error: loanError } = await supabase.from('loans').select('id').eq('customerId', id);
+            if(loanError) throw loanError;
+
+            if (loansToDelete && loansToDelete.length > 0) {
+              const loanIds = loansToDelete.map(l => l.id);
+              // Delete EMIs for those loans
+              const { error: emiError } = await supabase.from('emis').delete().in('loanId', loanIds);
+              if (emiError) throw emiError;
+              
+              // Delete the loans
+              const { error: loanDeleteError } = await supabase.from('loans').delete().in('id', loanIds);
+              if (loanDeleteError) throw loanDeleteError;
+            }
 
             // Delete the customer
-            const customerRef = doc(db, "customers", id);
-            batch.delete(customerRef);
-
-            // Find and delete associated loans
-            const loansQuery = query(collection(db, "loans"), where("customerId", "==", id));
-            const loansSnapshot = await getDocs(loansQuery);
-            
-            // For each loan, find and delete its EMIs
-            for (const loanDoc of loansSnapshot.docs) {
-                const loanId = loanDoc.id;
-                batch.delete(loanDoc.ref); // Delete loan
-                
-                const emisQuery = query(collection(db, "emis"), where("loanId", "==", loanId));
-                const emisSnapshot = await getDocs(emisQuery);
-                emisSnapshot.forEach(emiDoc => batch.delete(emiDoc.ref)); // Delete EMIs
-            }
-            
-            await batch.commit();
+            const { error: customerError } = await supabase.from('customers').delete().eq('id', id);
+            if (customerError) throw customerError;
 
             toast({
                 title: "Customer Deleted",
@@ -656,9 +656,9 @@ export default function CustomersPage() {
                 variant: "destructive"
             });
             fetchCustomers(); // Refresh the list
-        } catch (error) {
+        } catch (error: any) {
             console.error("Error deleting customer and related data: ", error);
-            toast({ variant: "destructive", title: "Error", description: "Failed to delete customer." });
+            toast({ variant: "destructive", title: "Error", description: error.message || "Failed to delete customer." });
         }
     }
 
