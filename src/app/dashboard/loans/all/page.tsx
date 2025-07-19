@@ -85,6 +85,24 @@ type Emi = {
 
 const generateEmiSchedule = (loanId: string, amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
     const monthlyRate = annualRate / 12 / 100;
+    if (monthlyRate <= 0) { // Avoid division by zero or negative rates
+        const emiAmount = amount / tenureMonths;
+        const schedule = [];
+        for (let i = 1; i <= tenureMonths; i++) {
+            const dueDate = new Date(startDate);
+            dueDate.setMonth(startDate.getMonth() + i);
+            schedule.push({
+                id: `EMI-${loanId}-${i}`,
+                loanId: loanId,
+                installment: i,
+                dueDate: dueDate.toISOString(),
+                amount: parseFloat(emiAmount.toFixed(2)),
+                status: 'unpaid' as const,
+            });
+        }
+        return schedule;
+    }
+
     const emiAmount = (amount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
     const schedule = [];
 
@@ -146,10 +164,14 @@ const LoanTopUpDialog = ({ loan, onLoanUpdated }: { loan: Loan & { id: string },
         
         // This is a simplified calculation. A real amortization schedule would be more accurate.
         const emiAmount = unpaidEmis[0]?.amount || 0;
-        for (let i = 0; i < paidEmis.length; i++) {
-            const interestPortion = currentPrincipal * monthlyRate;
-            const principalPortion = emiAmount - interestPortion;
-            currentPrincipal -= principalPortion;
+        if (monthlyRate > 0) {
+            for (let i = 0; i < paidEmis.length; i++) {
+                const interestPortion = currentPrincipal * monthlyRate;
+                const principalPortion = emiAmount - interestPortion;
+                currentPrincipal -= principalPortion;
+            }
+        } else {
+             currentPrincipal -= paidEmis.length * emiAmount;
         }
 
         setOutstandingPrincipal(parseFloat(currentPrincipal.toFixed(2)));
@@ -189,12 +211,13 @@ const LoanTopUpDialog = ({ loan, onLoanUpdated }: { loan: Loan & { id: string },
         // 2. Remove old unpaid EMIs
         const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
         const otherLoansEmis = allEmis.filter(emi => emi.loanId !== loan.id);
-        
+        const paidEmisForThisLoan = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
+
         // 3. Generate new EMI schedule
         const newEmiSchedule = generateEmiSchedule(loan.id, newTotalPrincipal, data.interestRate, data.tenure, data.topupDate);
         
         // 4. Save the updated EMI list
-        localStorage.setItem('jls_emis', JSON.stringify([...otherLoansEmis, ...newEmiSchedule]));
+        localStorage.setItem('jls_emis', JSON.stringify([...otherLoansEmis, ...paidEmisForThisLoan, ...newEmiSchedule]));
 
         toast({
             title: "Loan Top-up Successful!",
@@ -667,3 +690,6 @@ export default function AllLoansPage() {
 
     
 
+
+
+    
