@@ -56,7 +56,7 @@ export default function LoginPage() {
             .eq('authUid', data.user.id)
             .single();
           
-          if(profileError) throw profileError;
+          if(profileError) throw new Error("Could not find user profile. Please contact admin.");
 
           toast({
             title: "Login Successful",
@@ -110,7 +110,7 @@ export default function LoginPage() {
               <Info className="h-4 w-4" />
               <AlertTitle>Demo Credentials</AlertTitle>
               <AlertDescription>
-                Use <strong>admin@jls.com</strong> and password <strong>admin123</strong> to log in.
+                Use <strong>admin@jls.com</strong> / <strong>password</strong> to log in.
               </AlertDescription>
             </Alert>
             <div className="space-y-2">
@@ -120,7 +120,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="e.g., admin@jls.com"
+                  placeholder="e.g., your.email@jls.com"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -145,24 +145,19 @@ export default function LoginPage() {
                 />
               </div>
             </div>
-              <div className="flex items-center text-sm">
-                <a href="#" className="ml-auto font-medium text-primary hover:underline">Forgot password?</a>
-             </div>
           </CardContent>
-          <CardFooter className="flex flex-col gap-4">
+          <CardFooter className="flex-col gap-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? (
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-foreground"></div>
-              ) : (
-                <>
-                  <LogIn className="mr-2 h-5 w-5" />
-                  Sign In
-                </>
-              )}
+              {isLoading ? "Logging in..." : "Log In"}
+              <LogIn className="ml-2 h-5 w-5" />
             </Button>
-            <p className="text-center text-sm text-muted-foreground">
-              Don't have an account? <a href="#" className="font-medium text-primary hover:underline">Contact support</a>
-            </p>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>First-time user?</AlertTitle>
+              <AlertDescription>
+                Please contact an administrator to have an account created for you.
+              </AlertDescription>
+            </Alert>
           </CardFooter>
         </form>
       </Card>
