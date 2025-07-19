@@ -79,7 +79,10 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 
       // Step 2: Save user profile to Firestore, but without the password
       const { password, ...userData } = data;
-      await addDoc(collection(db, "users"), userData);
+      await addDoc(collection(db, "users"), {
+        ...userData,
+        authUid: firebaseUser.uid // Link Firestore doc to Auth user
+      });
 
       toast({ title: "User Added", description: `User ${data.name} has been created.` });
       onUserAdded();
@@ -87,11 +90,17 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
       setIsOpen(false);
     } catch (e: any) {
       console.error("Error adding user:", e);
-      let description = "Failed to add user.";
+      let description = "Failed to add user. Please check the console for details.";
       if (e.code === 'auth/email-already-in-use') {
         description = "This email address is already in use by another account.";
+      } else if (e.code === 'auth/weak-password') {
+        description = "The password is too weak. Please use at least 6 characters.";
+      } else if (e.code === 'auth/invalid-email') {
+        description = "The email address is not valid.";
+      } else if (e.code === 'auth/operation-not-allowed') {
+        description = "Email/password sign-up is not enabled. Please enable it in the Firebase console.";
       }
-      toast({ variant: 'destructive', title: "Error", description });
+      toast({ variant: 'destructive', title: "Registration Failed", description });
     }
   };
 
