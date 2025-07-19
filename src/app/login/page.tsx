@@ -32,10 +32,9 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const { user, loading } = useAuth();
   
-  // Redirect if user is already logged in
   if (!loading && user) {
     router.push('/dashboard');
-    return null; // Render nothing while redirecting
+    return null; 
   }
 
   const handleLogin = async (e: React.FormEvent) => {
