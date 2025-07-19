@@ -77,11 +77,11 @@ export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
             <div className="col-span-2 space-y-3">
                  <h4 className="font-semibold text-lg text-primary">Current Loan Status</h4>
                  <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                    <p><strong>Total Principal:</strong> Rs. {loan.amount.toLocaleString()}</p>
+                    <p><strong>Total Principal:</strong> Rs. {(loan.amount || 0).toLocaleString()}</p>
                     <p><strong>Interest Rate:</strong> {loan.interestRate}% p.a.</p>
                     <p><strong>Tenure:</strong> {loan.tenure} months</p>
                     <p><strong>Effective Date:</strong> {new Date(loan.disbursalDate).toLocaleDateString()}</p>
-                    <p><strong>Processing Fee:</strong> Rs. {loan.processingFee?.toLocaleString()}</p>
+                    <p><strong>Processing Fee:</strong> Rs. {(loan.processingFee || 0).toLocaleString()}</p>
                  </div>
             </div>
         </div>
@@ -92,18 +92,22 @@ export function LoanDetailsView({ loan, customer }: LoanDetailsViewProps) {
                 <div>
                     <h4 className="font-semibold text-lg text-primary mb-4">Top-up History</h4>
                     <div className="space-y-4">
-                        {loan.topupHistory.map((topup, index) => (
-                            <div key={topup.id} className="p-4 rounded-lg border bg-muted/50">
-                                <h5 className="font-semibold mb-2">Top-up Transaction #{index + 1} on {new Date(topup.topupDate).toLocaleDateString()}</h5>
-                                <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2 text-sm">
-                                    <p><strong>Top-up Amount:</strong> Rs. {topup.topupAmount.toLocaleString()}</p>
-                                    <p><strong>Processing Fee:</strong> Rs. {topup.processingFee.toLocaleString()}</p>
-                                    <p><strong>Net Disbursed:</strong> Rs. {(topup.topupAmount - topup.processingFee).toLocaleString()}</p>
-                                    <p><strong>New Rate:</strong> {topup.interestRate}%</p>
-                                    <p><strong>New Tenure:</strong> {topup.tenure} months</p>
+                        {loan.topupHistory.map((topup, index) => {
+                            const topupAmount = topup.topupAmount || 0;
+                            const processingFee = topup.processingFee || 0;
+                            return (
+                                <div key={topup.id || `tu-${index}`} className="p-4 rounded-lg border bg-muted/50">
+                                    <h5 className="font-semibold mb-2">Top-up Transaction #{index + 1} on {new Date(topup.topupDate).toLocaleDateString()}</h5>
+                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-4 gap-y-2 text-sm">
+                                        <p><strong>Top-up Amount:</strong> Rs. {topupAmount.toLocaleString()}</p>
+                                        <p><strong>Processing Fee:</strong> Rs. {processingFee.toLocaleString()}</p>
+                                        <p><strong>Net Disbursed:</strong> Rs. {(topupAmount - processingFee).toLocaleString()}</p>
+                                        <p><strong>New Rate:</strong> {topup.interestRate}%</p>
+                                        <p><strong>New Tenure:</strong> {topup.tenure} months</p>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            )
+                        })}
                     </div>
                 </div>
             </>
