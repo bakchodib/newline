@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from 'next/link';
-import { AtSign, Lock, LogIn, Info } from "lucide-react";
+import { User, AtSign, Lock, LogIn, Loader2 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 import { Button } from "@/components/ui/button";
@@ -20,72 +20,72 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
-export default function LoginPage() {
+export default function SignupPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [email, setEmail] = useState("admin@jls.com");
-  const [password, setPassword] = useState("password");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!name || !email || !password) {
         toast({
             variant: "destructive",
             title: "Validation Error",
-            description: "Email and password are required.",
+            description: "All fields are required.",
         });
         return;
     }
     setIsLoading(true);
 
     try {
-        const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: email,
+        password: password,
+        options: {
+          data: {
+            name: name,
+            role: 'customer', // Default role for public signups
+          }
+        },
+      });
+
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("Signup failed, no user returned.");
+
+      // Insert profile into the public 'users' table
+      const { error: profileError } = await supabase
+        .from('users')
+        .insert({
+          authUid: authData.user.id,
+          name: name,
+          loginId: email,
+          role: 'customer',
         });
+      
+      if (profileError) {
+        // This is a tricky state. The auth user exists but the profile failed.
+        // For this app, we'll notify the user and log the error.
+        // In a production app, you might want to trigger a cleanup function.
+        console.error("Failed to create user profile:", profileError);
+        throw new Error("Could not create user profile. Please contact support.");
+      }
 
-        if (error) throw error;
-        
-        if (data.user) {
-          // Fetch user profile from your 'users' table
-          const { data: userProfile, error: profileError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('authUid', data.user.id)
-            .single();
-          
-          if(profileError) throw new Error("Could not find user profile. Please contact admin.");
-          if(!userProfile) throw new Error("User profile not found.");
-
-          toast({
-            title: "Login Successful",
-            description: `Welcome back, ${userProfile.name}!`,
-          });
-
-          // Store user session info
-          const userData = {
-              id: userProfile.id,
-              loginId: userProfile.loginId,
-              name: userProfile.name,
-              role: userProfile.role,
-              authUid: data.user.id,
-          };
-          localStorage.setItem("jls_user", JSON.stringify(userData));
-          router.push("/dashboard");
-
-        } else {
-            throw new Error("Login failed, no user data returned.");
-        }
+      toast({
+        title: "Signup Successful",
+        description: "Your account has been created. Please log in.",
+      });
+      router.push("/login");
 
     } catch (error: any) {
-        console.error("Login failed:", error);
+        console.error("Signup failed:", error);
         toast({
             variant: "destructive",
-            title: "Login Failed",
-            description: error.message || "Invalid credentials. Please try again.",
+            title: "Signup Failed",
+            description: error.message || "An unexpected error occurred. Please try again.",
         });
     } finally {
         setIsLoading(false);
@@ -100,21 +100,30 @@ export default function LoginPage() {
             <Logo />
           </div>
           <CardTitle className="text-2xl font-bold tracking-tight">
-            Welcome Back
+            Create an Account
           </CardTitle>
           <CardDescription>
-            Log in to your JLS Finance account.
+            Enter your details below to register.
           </CardDescription>
         </CardHeader>
-        <form onSubmit={handleLogin}>
+        <form onSubmit={handleSignup}>
           <CardContent className="space-y-4">
-             <Alert>
-              <Info className="h-4 w-4" />
-              <AlertTitle>Demo Credentials</AlertTitle>
-              <AlertDescription>
-                Use <strong>admin@jls.com</strong> / <strong>password</strong> to log in.
-              </AlertDescription>
-            </Alert>
+            <div className="space-y-2">
+              <Label htmlFor="name">Full Name</Label>
+              <div className="relative flex items-center">
+                <User className="absolute left-3 h-5 w-5 text-muted-foreground" />
+                <Input
+                  id="name"
+                  type="text"
+                  placeholder="e.g., John Doe"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="pl-10"
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative flex items-center">
@@ -122,7 +131,7 @@ export default function LoginPage() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="e.g., your.email@jls.com"
+                  placeholder="e.g., your.email@example.com"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -150,13 +159,12 @@ export default function LoginPage() {
           </CardContent>
           <CardFooter className="flex-col gap-4">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? "Logging in..." : "Log In"}
-              <LogIn className="ml-2 h-5 w-5" />
+              {isLoading ? <><Loader2 className="animate-spin" /> Signing up...</> : 'Sign Up'}
             </Button>
             <p className="text-sm text-muted-foreground">
-                Don't have an account?{" "}
-                <Link href="/signup" className="font-semibold text-primary hover:underline">
-                    Sign up
+                Already have an account?{" "}
+                <Link href="/login" className="font-semibold text-primary hover:underline">
+                    Log in
                 </Link>
             </p>
           </CardFooter>
