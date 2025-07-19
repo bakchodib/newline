@@ -67,6 +67,8 @@ const DisburseLoanDialog = ({ loan, onDisbursed }: { loan: LoanApplication, onDi
     });
 
     const onSubmit = (data: DisbursalForm) => {
+        const processingFee = loan.amount * 0.05; // 5% processing fee
+
         const finalLoan: Loan = {
             id: `L-${Date.now()}`,
             customerId: loan.customerId,
@@ -74,6 +76,7 @@ const DisburseLoanDialog = ({ loan, onDisbursed }: { loan: LoanApplication, onDi
             interestRate: data.interestRate,
             tenure: data.tenure,
             disbursalDate: data.disbursalDate,
+            processingFee: processingFee,
         };
 
         // Generate EMI Schedule
@@ -105,6 +108,7 @@ const DisburseLoanDialog = ({ loan, onDisbursed }: { loan: LoanApplication, onDi
                     <DialogTitle>Disburse Loan: {loan.id}</DialogTitle>
                     <DialogDescription>
                         Finalize loan terms for an amount of Rs. {loan.amount.toLocaleString()}.
+                        A 5% processing fee of Rs. {(loan.amount * 0.05).toLocaleString()} will be applied.
                     </DialogDescription>
                 </DialogHeader>
                  <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">

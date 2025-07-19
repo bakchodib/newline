@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Button } from './ui/button';
@@ -9,7 +9,7 @@ import { FileText, CreditCard, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import type { Customer } from '@/app/dashboard/customers/page';
-import type { Loan } from '@/app/dashboard/loans/page';
+import type { Loan } from '@/app/dashboard/loans/all/page';
 
 interface jsPDFWithAutoTable extends jsPDF {
   autoTable: (options: any) => jsPDF;
@@ -51,8 +51,6 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const { toast } = useToast();
     const [isGenerating, setIsGenerating] = useState(false);
     
-    // The customer photo is now passed directly via props.
-    // A placeholder is used if the customer has no photo.
     const customerPhoto = customer.photo || 'https://placehold.co/150x150.png';
 
 
@@ -104,11 +102,9 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text("Customer Details", 20, 42);
 
             try {
-              // customerPhoto can be a data URI or a URL. jsPDF handles both.
               doc.addImage(customerPhoto, 'PNG', 150, 45, 40, 40);
             } catch (e) {
               console.error("Error adding image to PDF:", e);
-              // Continue without the image if it fails
             }
             
             doc.setFont('helvetica', 'normal');
@@ -123,6 +119,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.setFont('helvetica', 'normal');
             doc.text(`Loan ID: ${loan.id}`, 20, 103);
             doc.text(`Loan Amount: Rs. ${loan.amount.toLocaleString()}`, 20, 109);
+            doc.text(`Processing Fee (5%): Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 90, 109);
             doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 115);
             doc.text(`Tenure: ${loan.tenure} months`, 20, 121);
             doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, 127);
@@ -135,14 +132,14 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
                 head: [['Month', 'Due Date', 'EMI Amount (Rs.)', 'Principal', 'Interest', 'Balance']],
                 body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance]),
                 theme: 'grid',
-                headStyles: { fillColor: [34, 139, 34] }, // A pleasant green color
+                headStyles: { fillColor: [34, 139, 34] },
             });
             
             let finalY = (doc as any).lastAutoTable.finalY || 180;
 
             if(type === 'agreement'){
                 doc.addPage();
-                finalY = 20; // Reset Y position for new page
+                finalY = 20; 
                 
                 if (customer.guarantor && customer.guarantor.name) {
                     doc.setFontSize(12);
@@ -175,10 +172,8 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text("Authorized Signatory", doc.internal.pageSize.getWidth() - 65, finalY + 30);
             doc.text("(JLS Finance Ltd)", doc.internal.pageSize.getWidth() - 65, finalY + 35);
             
-            // Add watermark
             addWatermark(doc);
 
-            // Preview or Download
             doc.save(`${type}_${customer.id}.pdf`);
             
             toast({

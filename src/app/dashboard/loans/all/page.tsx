@@ -26,6 +26,7 @@ const loanSchema = z.object({
   interestRate: z.coerce.number().min(0, "Interest rate cannot be negative."),
   tenure: z.coerce.number().int().min(1, "Tenure must be at least 1 month."),
   disbursalDate: z.date({ required_error: "Disbursal date is required." }),
+  processingFee: z.coerce.number().min(0).optional(),
 });
 
 export type Loan = z.infer<typeof loanSchema>;
