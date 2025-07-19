@@ -100,11 +100,11 @@ export function LoanDocuments() {
             doc.setFont('helvetica', 'bold');
             doc.setTextColor(220, 220, 220);
             doc.setFontSize(50);
-            doc.saveState();
+            doc.saveGraphicsState();
             doc.translate(doc.internal.pageSize.getWidth() / 2, doc.internal.pageSize.getHeight() / 2);
             doc.rotate(-45);
             doc.text("JLS FINANCE LTD", 0, 0, { align: 'center' });
-            doc.restoreState();
+            doc.restoreGraphicsState();
         }
     };
 
