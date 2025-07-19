@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from 'next/link';
 import { AtSign, Lock, LogIn, Info } from "lucide-react";
@@ -23,6 +23,32 @@ import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useAuth } from "@/hooks/useAuth";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const LoginSkeleton = () => (
+    <Card className="w-full max-w-md shadow-2xl">
+        <CardHeader className="text-center space-y-4">
+            <Skeleton className="h-10 w-32 mx-auto" />
+            <Skeleton className="h-8 w-48 mx-auto" />
+            <Skeleton className="h-5 w-64 mx-auto" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+            <div className="space-y-2">
+                <Skeleton className="h-5 w-16" />
+                <Skeleton className="h-10 w-full" />
+            </div>
+            <div className="space-y-2">
+                <Skeleton className="h-5 w-16" />
+                <Skeleton className="h-10 w-full" />
+            </div>
+        </CardContent>
+        <CardFooter className="flex-col gap-4">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-5 w-48" />
+        </CardFooter>
+    </Card>
+);
+
 
 export default function LoginPage() {
   const router = useRouter();
@@ -32,10 +58,12 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const { user, loading } = useAuth();
   
-  if (!loading && user) {
-    router.push('/dashboard');
-    return null; 
-  }
+  // Immediately redirect if user is already logged in
+  useEffect(() => {
+    if (!loading && user) {
+      router.push('/dashboard');
+    }
+  }, [loading, user, router]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +96,15 @@ export default function LoginPage() {
         setIsLoading(false);
     }
   };
+  
+  if (loading || user) {
+      return (
+          <div className="flex min-h-screen items-center justify-center bg-background p-4">
+              <LoginSkeleton />
+          </div>
+      );
+  }
+
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
