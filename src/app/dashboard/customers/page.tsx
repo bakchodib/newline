@@ -184,9 +184,13 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
         reset();
         setPhotoPreview(null);
         setIsOpen(false);
-    } catch (error) {
+    } catch (error: any) {
         console.error("Error adding customer: ", error);
-        toast({ variant: "destructive", title: "Error", description: "Failed to register customer." });
+        let description = "Failed to register customer.";
+        if (error.code === 'permission-denied') {
+            description = "You do not have permission to add customers. Please check your login or contact an admin.";
+        }
+        toast({ variant: "destructive", title: "Error", description });
     }
   };
 
