@@ -1,7 +1,7 @@
 import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
-import { AuthProvider } from '@/hooks/useAuth';
+import { AuthProvider } from '@/hooks/useAuth.tsx';
 
 export const metadata: Metadata = {
   title: 'JLS Finance PWA',
