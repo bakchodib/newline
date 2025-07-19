@@ -421,7 +421,7 @@ const EditLoanDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, on
     const onSubmit = (data: Loan) => {
         try {
             const allLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]') as (Loan & {id: string})[];
-            const updatedLoans = allLoans.map(l => l.id === loan.id ? { ...l, ...data } : l);
+            const updatedLoans = allLoans.map(l => l.id === loan.id ? { ...loan, ...data, status: loan.status || 'active' } : l);
             localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
 
             // Note: This simplified update does not regenerate EMI schedules.
@@ -544,7 +544,7 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                 <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
                                 <TableCell>
                                     <Badge variant={loan.status === 'closed' ? 'destructive' : 'default'}>
-                                        {loan.status.charAt(0).toUpperCase() + loan.status.slice(1)}
+                                        {loan.status ? loan.status.charAt(0).toUpperCase() + loan.status.slice(1) : 'Active'}
                                     </Badge>
                                 </TableCell>
                                 <TableCell className="text-center">
@@ -631,4 +631,3 @@ export default function AllLoansPage() {
         </div>
     );
 }
-

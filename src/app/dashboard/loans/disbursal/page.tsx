@@ -77,6 +77,7 @@ const DisburseLoanDialog = ({ loan, customer, onDisbursed }: { loan: LoanApplica
             tenure: data.tenure,
             disbursalDate: data.disbursalDate,
             processingFee: processingFee,
+            status: 'active',
         };
 
         // Generate EMI Schedule
