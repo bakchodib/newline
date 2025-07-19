@@ -8,9 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
-import { Search, Receipt } from 'lucide-react';
+import { Search, Receipt, Calendar } from 'lucide-react';
 import type { Loan } from '@/app/dashboard/loans/all/page';
 import type { Customer } from '@/app/dashboard/customers/page';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 type Emi = {
   id: string;
@@ -21,13 +22,32 @@ type Emi = {
   status: 'paid' | 'unpaid';
 };
 
+const months = [
+    { value: 0, label: 'January' }, { value: 1, label: 'February' }, { value: 2, label: 'March' },
+    { value: 3, label: 'April' }, { value: 4, label: 'May' }, { value: 5, label: 'June' },
+    { value: 6, label: 'July' }, { value: 7, label: 'August' }, { value: 8, label: 'September' },
+    { value: 9, label: 'October' }, { value: 10, label: 'November' }, { value: 11, label: 'December' }
+];
+
+const getYears = () => {
+    const currentYear = new Date().getFullYear();
+    const years = [];
+    for (let i = currentYear - 5; i <= currentYear + 5; i++) {
+        years.push(i);
+    }
+    return years;
+};
+
 export default function EmiCollectionPage() {
     const [allEmis, setAllEmis] = useState<Emi[]>([]);
     const [filteredEmis, setFilteredEmis] = useState<Emi[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [loans, setLoans] = useState<(Loan & { id: string })[]>([]);
     const [searchTerm, setSearchTerm] = useState('');
+    const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const { toast } = useToast();
+    const years = getYears();
 
     useEffect(() => {
         try {
@@ -37,36 +57,38 @@ export default function EmiCollectionPage() {
             setCustomers(storedCustomers);
             setLoans(storedLoans);
             setAllEmis(storedEmis);
-            setFilteredEmis(storedEmis);
         } catch (error) {
             console.error("Failed to load data from localStorage", error);
         }
     }, []);
 
     useEffect(() => {
-        if (!searchTerm) {
-            setFilteredEmis(allEmis);
-            return;
-        }
-        
-        const lowercasedTerm = searchTerm.toLowerCase();
+        let results = allEmis;
 
-        const results = allEmis.filter(emi => {
-            const loan = loans.find(l => l.id === emi.loanId);
-            if (!loan) return false;
-
-            const customer = customers.find(c => c.id === loan.customerId);
-            
-            return (
-                emi.loanId.toLowerCase().includes(lowercasedTerm) ||
-                customer?.name.toLowerCase().includes(lowercasedTerm) ||
-                customer?.id?.toLowerCase().includes(lowercasedTerm)
-            );
+        // Filter by month and year
+        results = results.filter(emi => {
+            const dueDate = new Date(emi.dueDate);
+            return dueDate.getMonth() === selectedMonth && dueDate.getFullYear() === selectedYear;
         });
+
+        // Filter by search term
+        if (searchTerm) {
+            const lowercasedTerm = searchTerm.toLowerCase();
+            results = results.filter(emi => {
+                const loan = loans.find(l => l.id === emi.loanId);
+                if (!loan) return false;
+                const customer = customers.find(c => c.id === loan.customerId);
+                return (
+                    emi.loanId.toLowerCase().includes(lowercasedTerm) ||
+                    customer?.name.toLowerCase().includes(lowercasedTerm) ||
+                    customer?.id?.toLowerCase().includes(lowercasedTerm)
+                );
+            });
+        }
 
         setFilteredEmis(results);
 
-    }, [searchTerm, allEmis, loans, customers]);
+    }, [searchTerm, allEmis, loans, customers, selectedMonth, selectedYear]);
 
 
     const getLoanAndCustomer = (loanId: string) => {
@@ -94,21 +116,42 @@ export default function EmiCollectionPage() {
                 <CardDescription>Record and track EMI payments from customers.</CardDescription>
             </CardHeader>
             <CardContent>
-                <div className="flex items-center gap-2 mb-6">
-                    <Search className="h-5 w-5 text-muted-foreground" />
-                    <Input
-                        placeholder="Search by Customer Name, Customer ID, or Loan ID..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                <div className="flex flex-col sm:flex-row gap-4 mb-6">
+                    <div className="flex items-center gap-2 flex-grow">
+                         <Search className="h-5 w-5 text-muted-foreground" />
+                        <Input
+                            placeholder="Search by Customer Name, Customer ID, or Loan ID..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <Calendar className="h-5 w-5 text-muted-foreground" />
+                         <Select value={String(selectedMonth)} onValueChange={(val) => setSelectedMonth(Number(val))}>
+                            <SelectTrigger className="w-[180px]">
+                                <SelectValue placeholder="Select Month" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {months.map(m => <SelectItem key={m.value} value={String(m.value)}>{m.label}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                         <Select value={String(selectedYear)} onValueChange={(val) => setSelectedYear(Number(val))}>
+                            <SelectTrigger className="w-[120px]">
+                                <SelectValue placeholder="Select Year" />
+                            </SelectTrigger>
+                            <SelectContent>
+                               {years.map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                            </SelectContent>
+                        </Select>
+                    </div>
                 </div>
 
                 {filteredEmis.length === 0 ? (
                     <div className="flex flex-col items-center justify-center text-center p-10 border-2 border-dashed rounded-lg mt-6">
                         <Receipt className="h-12 w-12 text-muted-foreground mb-4" />
-                        <h3 className="text-xl font-semibold">No EMIs Found</h3>
+                        <h3 className="text-xl font-semibold">No EMIs Found for {months.find(m=>m.value === selectedMonth)?.label} {selectedYear}</h3>
                         <p className="text-muted-foreground">
-                            {searchTerm ? 'No results match your search.' : 'Disburse loans to generate EMI schedules.'}
+                            {searchTerm ? 'No results match your search criteria.' : 'Try selecting a different month or year.'}
                         </p>
                     </div>
                 ) : (
