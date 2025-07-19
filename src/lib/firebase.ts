@@ -14,7 +14,7 @@ const firebaseConfig = {
   apiKey: "AIzaSyCL77cBUaywr84qDscxCyy0PM_gRnxp7p0",
   authDomain: "jlsfinalhai.firebaseapp.com",
   projectId: "jlsfinalhai",
-  storageBucket: "jlsfinalhai.appspot.com",
+  storageBucket: "jlsfinalhai.firebasestorage.app",
   messagingSenderId: "90437797359",
   appId: "1:90437797359:web:ee86797f9863e64a7ea21a",
   measurementId: "G-ZSV85HDRT1"
