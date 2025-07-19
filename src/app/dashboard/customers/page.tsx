@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2 } from 'lucide-react';
+import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2, Edit } from 'lucide-react';
 import Image from 'next/image';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
@@ -72,6 +72,62 @@ const customerSchema = z.object({
 
 export type Customer = z.infer<typeof customerSchema>;
 
+const PhotoUploader = ({
+  photoPreview,
+  isUploading,
+  onPhotoChange,
+  onClearPhoto,
+}: {
+  photoPreview: string | null;
+  isUploading: boolean;
+  onPhotoChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onClearPhoto: () => void;
+}) => (
+  <div className="flex flex-col items-center gap-4">
+    <div className="w-40 h-40 rounded-full border-2 border-dashed flex items-center justify-center bg-muted overflow-hidden">
+      {photoPreview ? (
+        <Image src={photoPreview} alt="Preview" width={160} height={160} className="object-cover w-full h-full" />
+      ) : isUploading ? (
+        <Loader2 className="w-12 h-12 text-muted-foreground animate-spin" />
+      ) : (
+        <User className="w-20 h-20 text-muted-foreground" />
+      )}
+    </div>
+    <div className="flex gap-2">
+      <Button type="button" size="sm" variant="outline" asChild disabled={isUploading}>
+        <label htmlFor="photo-upload" className="cursor-pointer">
+          <Upload className="mr-2 h-4 w-4" /> Upload
+        </label>
+      </Button>
+      <Input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={onPhotoChange} disabled={isUploading} />
+      {photoPreview && (
+        <Button type="button" size="sm" variant="destructive" onClick={onClearPhoto} disabled={isUploading}>
+          <X className="mr-2 h-4 w-4" /> Remove
+        </Button>
+      )}
+    </div>
+  </div>
+);
+
+const handlePhotoUpload = async (file: File): Promise<string> => {
+    const IMGUR_API_KEY = "881d667e66f0b22ff45ba16e248fbcb2";
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGUR_API_KEY}`, {
+        method: 'POST',
+        body: formData,
+    });
+    
+    const result = await response.json();
+
+    if (result.success && result.data.url) {
+        return result.data.url;
+    } else {
+        throw new Error(result.error?.message || 'Failed to upload image.');
+    }
+};
+
 const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (customer: Customer) => void }) => {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
@@ -98,37 +154,14 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
     if (!file) return;
 
     setIsUploading(true);
-    const formData = new FormData();
-    formData.append('image', file);
-    
-    // NOTE: It's generally recommended to store API keys in environment variables
-    // on the server-side for security, but for this client-side PWA example,
-    // we'll use it directly. Be mindful of this in a production application.
-    const IMGUR_API_KEY = "881d667e66f0b22ff45ba16e248fbcb2";
-    
     try {
-        const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGUR_API_KEY}`, {
-            method: 'POST',
-            body: formData,
-        });
-
-        const result = await response.json();
-        
-        if (result.success && result.data.url) {
-            const imageUrl = result.data.url;
-            setValue('photo', imageUrl);
-            setPhotoPreview(imageUrl);
-            toast({ title: "Photo Uploaded", description: "The customer photo was uploaded successfully." });
-        } else {
-            throw new Error(result.error?.message || 'Failed to upload image.');
-        }
+        const imageUrl = await handlePhotoUpload(file);
+        setValue('photo', imageUrl);
+        setPhotoPreview(imageUrl);
+        toast({ title: "Photo Uploaded", description: "The customer photo was uploaded successfully." });
     } catch (error) {
         console.error("ImgBB Upload Error:", error);
-        toast({
-            variant: "destructive",
-            title: "Upload Failed",
-            description: "Could not upload the photo. Please try again.",
-        });
+        toast({ variant: "destructive", title: "Upload Failed", description: "Could not upload the photo. Please try again."});
         clearPhoto();
     } finally {
         setIsUploading(false);
@@ -146,7 +179,6 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
       id: `C-${Date.now()}`
     };
     
-    // Save to localStorage
     const existingCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
     localStorage.setItem('jls_customers', JSON.stringify([...existingCustomers, newCustomer]));
     
@@ -190,30 +222,12 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
                     render={({ field }) => (
                       <FormItem>
                         <FormControl>
-                          <div className="flex flex-col items-center gap-4">
-                            <div className="w-40 h-40 rounded-full border-2 border-dashed flex items-center justify-center bg-muted overflow-hidden">
-                              {photoPreview ? (
-                                <Image src={photoPreview} alt="Preview" width={160} height={160} className="object-cover w-full h-full" />
-                              ) : isUploading ? (
-                                <Loader2 className="w-12 h-12 text-muted-foreground animate-spin" />
-                              ) : (
-                                <User className="w-20 h-20 text-muted-foreground" />
-                              )}
-                            </div>
-                             <div className="flex gap-2">
-                                <Button type="button" size="sm" variant="outline" asChild disabled={isUploading}>
-                                  <label htmlFor="photo-upload" className="cursor-pointer">
-                                    <Upload className="mr-2 h-4 w-4" /> Upload
-                                  </label>
-                                </Button>
-                                <Input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} disabled={isUploading} />
-                                {photoPreview && (
-                                    <Button type="button" size="sm" variant="destructive" onClick={clearPhoto} disabled={isUploading}>
-                                        <X className="mr-2 h-4 w-4" /> Remove
-                                    </Button>
-                                )}
-                            </div>
-                          </div>
+                          <PhotoUploader 
+                            photoPreview={photoPreview}
+                            isUploading={isUploading}
+                            onPhotoChange={handlePhotoChange}
+                            onClearPhoto={clearPhoto}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -288,7 +302,176 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
             </div>
             <DialogFooter className="mt-4">
               <Button type="submit" disabled={isSubmitting || isUploading}>
-                {isSubmitting ? 'Saving...' : 'Save Customer'}
+                {isSubmitting || isUploading ? 'Saving...' : 'Save Customer'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+const EditCustomerDialog = ({ customer, onCustomerUpdated }: { customer: Customer, onCustomerUpdated: () => void }) => {
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const [isGuarantorOpen, setIsGuarantorOpen] = useState(customer.guarantor && !!customer.guarantor.name);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(customer.photo || null);
+  const [isUploading, setIsUploading] = useState(false);
+
+  const form = useForm<Customer>({
+    resolver: zodResolver(customerSchema),
+    defaultValues: customer,
+  });
+
+  const { control, handleSubmit, register, reset, setValue, formState: { errors, isSubmitting } } = form;
+
+  const handlePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const imageUrl = await handlePhotoUpload(file);
+      setValue('photo', imageUrl);
+      setPhotoPreview(imageUrl);
+      toast({ title: "Photo Updated", description: "The new photo was uploaded successfully." });
+    } catch (error) {
+      console.error("ImgBB Upload Error:", error);
+      toast({ variant: "destructive", title: "Upload Failed", description: "Could not upload the new photo." });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const clearPhoto = () => {
+    setValue('photo', '');
+    setPhotoPreview(null);
+  };
+
+  const onSubmit = (data: Customer) => {
+    const existingCustomers: Customer[] = JSON.parse(localStorage.getItem('jls_customers') || '[]');
+    const updatedCustomers = existingCustomers.map(c => (c.id === customer.id ? { ...c, ...data } : c));
+    localStorage.setItem('jls_customers', JSON.stringify(updatedCustomers));
+    
+    onCustomerUpdated();
+    toast({ title: "Success", description: "Customer details updated successfully." });
+    setIsOpen(false);
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => {
+      if (open) {
+        reset(customer);
+        setPhotoPreview(customer.photo || null);
+      }
+      setIsOpen(open);
+    }}>
+      <DialogTrigger asChild>
+        <Button variant="ghost" size="icon">
+          <Edit className="h-4 w-4" />
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Edit Customer: {customer.name}</DialogTitle>
+          <DialogDescription>
+            Update the details for this customer.
+          </DialogDescription>
+        </DialogHeader>
+        <Form {...form}>
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto px-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 space-y-4">
+                  <h4 className="font-semibold text-primary">Customer Photo</h4>
+                  <FormField
+                    control={control}
+                    name="photo"
+                    render={() => (
+                      <FormItem>
+                        <FormControl>
+                          <PhotoUploader
+                            photoPreview={photoPreview}
+                            isUploading={isUploading}
+                            onPhotoChange={handlePhotoChange}
+                            onClearPhoto={clearPhoto}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-4">
+                  <h4 className="font-semibold text-primary">Personal Details</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Full Name</Label>
+                    <Input id="name" {...register('name')} />
+                    {errors.name && <p className="text-destructive text-sm mt-1">{errors.name.message}</p>}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone Number</Label>
+                      <Input id="phone" {...register('phone')} />
+                      {errors.phone && <p className="text-destructive text-sm mt-1">{errors.phone.message}</p>}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="address">Address</Label>
+                    <Input id="address" {...register('address')} />
+                    {errors.address && <p className="text-destructive text-sm mt-1">{errors.address.message}</p>}
+                  </div>
+
+                  <h4 className="font-semibold text-primary pt-4">KYC Details</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="kyc.idType">ID Type</Label>
+                      <select {...register('kyc.idType')} className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
+                        <option value="">Select ID Type</option>
+                        <option value="Aadhar Card">Aadhar Card</option>
+                        <option value="Voter ID">Voter ID</option>
+                        <option value="PAN Card">PAN Card</option>
+                        <option value="Passport">Passport</option>
+                      </select>
+                      {errors.kyc?.idType && <p className="text-destructive text-sm mt-1">{errors.kyc.idType.message}</p>}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="kyc.idNumber">ID Number</Label>
+                      <Input id="kyc.idNumber" {...register('kyc.idNumber')} />
+                      {errors.kyc?.idNumber && <p className="text-destructive text-sm mt-1">{errors.kyc.idNumber.message}</p>}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <Collapsible open={isGuarantorOpen} onOpenChange={setIsGuarantorOpen} className="space-y-2 pt-4">
+                <CollapsibleTrigger className="flex w-full items-center justify-between font-semibold text-primary text-lg border-t pt-4">
+                  Guarantor Details
+                  {isGuarantorOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-4 pt-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="guarantor.name">Guarantor Name</Label>
+                    <Input id="guarantor.name" {...register('guarantor.name')} />
+                    {errors.guarantor?.name && <p className="text-destructive text-sm mt-1">{errors.guarantor.name.message}</p>}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="guarantor.phone">Guarantor Phone</Label>
+                    <Input id="guarantor.phone" {...register('guarantor.phone')} />
+                    {errors.guarantor?.phone && <p className="text-destructive text-sm mt-1">{errors.guarantor.phone.message}</p>}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="guarantor.address">Guarantor Address</Label>
+                    <Input id="guarantor.address" {...register('guarantor.address')} />
+                    {errors.guarantor?.address && <p className="text-destructive text-sm mt-1">{errors.guarantor.address.message}</p>}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button type="submit" disabled={isSubmitting || isUploading}>
+                {isSubmitting || isUploading ? 'Saving...' : 'Save Changes'}
               </Button>
             </DialogFooter>
           </form>
@@ -299,7 +482,7 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
 };
 
 
-const CustomerList = ({ customers, onDeleteCustomer }: { customers: Customer[], onDeleteCustomer: (id: string) => void }) => {
+const CustomerList = ({ customers, onDeleteCustomer, onCustomerUpdated }: { customers: Customer[], onDeleteCustomer: (id: string) => void, onCustomerUpdated: () => void }) => {
     if (customers.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center text-center p-10 border-2 border-dashed rounded-lg mt-6">
@@ -330,28 +513,31 @@ const CustomerList = ({ customers, onDeleteCustomer }: { customers: Customer[], 
                             <TableCell>{customer.phone}</TableCell>
                             <TableCell>{customer.address}</TableCell>
                             <TableCell className="text-right">
-                                <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
-                                          <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                                This action cannot be undone. This will permanently delete the customer
-                                                and all associated loan data.
-                                            </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => onDeleteCustomer(customer.id!)} className="bg-destructive hover:bg-destructive/90">
-                                                Delete
-                                            </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
+                                <div className="flex items-center justify-end">
+                                    <EditCustomerDialog customer={customer} onCustomerUpdated={onCustomerUpdated} />
+                                    <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
+                                              <Trash2 className="h-4 w-4" />
+                                            </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                                <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                                                <AlertDialogDescription>
+                                                    This action cannot be undone. This will permanently delete the customer
+                                                    and all associated loan data.
+                                                </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                                <AlertDialogAction onClick={() => onDeleteCustomer(customer.id!)} className="bg-destructive hover:bg-destructive/90">
+                                                    Delete
+                                                </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                    </AlertDialog>
+                                </div>
                             </TableCell>
                         </TableRow>
                     ))}
@@ -365,8 +551,7 @@ export default function CustomersPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const { toast } = useToast();
 
-    useEffect(() => {
-        // Load customers from localStorage on component mount
+    const fetchCustomers = () => {
         try {
             const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
             setCustomers(storedCustomers);
@@ -374,6 +559,10 @@ export default function CustomersPage() {
             console.error("Failed to parse customers from localStorage", e);
             setCustomers([]);
         }
+    }
+
+    useEffect(() => {
+        fetchCustomers();
     }, []);
 
     const handleCustomerAdded = (customer: Customer) => {
@@ -407,10 +596,8 @@ export default function CustomersPage() {
                 <CustomerRegistrationForm onCustomerAdded={handleCustomerAdded} />
             </CardHeader>
             <CardContent>
-                <CustomerList customers={customers} onDeleteCustomer={handleDeleteCustomer} />
+                <CustomerList customers={customers} onDeleteCustomer={handleDeleteCustomer} onCustomerUpdated={fetchCustomers} />
             </CardContent>
         </Card>
     );
 }
-
-    
