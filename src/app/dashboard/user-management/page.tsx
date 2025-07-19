@@ -1,11 +1,13 @@
 
 "use client";
 
-import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, Trash2, Edit, Save } from 'lucide-react';
+import { PlusCircle, Trash2 } from 'lucide-react';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -55,36 +57,33 @@ const userSchema = z.object({
   role: z.enum(['admin', 'agent', 'customer']),
 });
 
-type User = z.infer<typeof userSchema>;
-type UserData = { [key: string]: Omit<User, 'loginId'> };
+export type User = z.infer<typeof userSchema> & { id: string };
 
 const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
   const [isOpen, setIsOpen] = useState(false);
   const { toast } = useToast();
-  const { register, handleSubmit, reset, formState: { errors, isSubmitting } } = useForm<User>({
+  const { register, handleSubmit, reset, control, formState: { errors, isSubmitting } } = useForm<z.infer<typeof userSchema>>({
     resolver: zodResolver(userSchema),
   });
 
-  const onSubmit = (data: User) => {
+  const onSubmit = async (data: z.infer<typeof userSchema>) => {
     try {
-      const usersDb: UserData = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
-      if (usersDb[data.loginId]) {
+      // Check if user already exists
+      const q = query(collection(db, "users"), where("loginId", "==", data.loginId));
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
         toast({ variant: 'destructive', title: "Error", description: "A user with this Login ID already exists." });
         return;
       }
 
-      usersDb[data.loginId] = {
-        name: data.name,
-        password: data.password,
-        role: data.role,
-      };
+      await addDoc(collection(db, "users"), data);
 
-      localStorage.setItem('jls_users_db', JSON.stringify(usersDb));
       toast({ title: "User Added", description: `User ${data.name} has been created.` });
       onUserAdded();
       reset();
       setIsOpen(false);
     } catch (e) {
+      console.error("Error adding user:", e);
       toast({ variant: 'destructive', title: "Error", description: "Failed to add user." });
     }
   };
@@ -120,16 +119,22 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
           </div>
           <div>
             <Label htmlFor="role">Role</Label>
-            <Select onValueChange={(value) => (register('role').onChange({ target: { value } }))} name={register('role').name}>
-                <SelectTrigger>
-                    <SelectValue placeholder="Select a role" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="admin">Admin</SelectItem>
-                    <SelectItem value="agent">Agent</SelectItem>
-                    <SelectItem value="customer">Customer</SelectItem>
-                </SelectContent>
-            </Select>
+            <Controller
+                name="role"
+                control={control}
+                render={({ field }) => (
+                     <Select onValueChange={field.onChange} defaultValue={field.value}>
+                        <SelectTrigger>
+                            <SelectValue placeholder="Select a role" />
+                        </SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="admin">Admin</SelectItem>
+                            <SelectItem value="agent">Agent</SelectItem>
+                            <SelectItem value="customer">Customer</SelectItem>
+                        </SelectContent>
+                    </Select>
+                )}
+            />
             {errors.role && <p className="text-destructive text-sm mt-1">{errors.role.message}</p>}
           </div>
           <DialogFooter>
@@ -143,20 +148,17 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
   );
 };
 
-
-const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUserUpdated: () => void, onUserDeleted: (loginId: string) => void }) => {
+const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUserUpdated: () => void, onUserDeleted: (id: string) => void }) => {
     const { toast } = useToast();
 
-    const handleRoleChange = (loginId: string, newRole: 'admin' | 'agent' | 'customer') => {
+    const handleRoleChange = async (userId: string, newRole: 'admin' | 'agent' | 'customer') => {
         try {
-            const usersDb: UserData = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
-            if (usersDb[loginId]) {
-                usersDb[loginId].role = newRole;
-                localStorage.setItem('jls_users_db', JSON.stringify(usersDb));
-                toast({ title: 'Role Updated', description: `User role has been changed to ${newRole}.` });
-                onUserUpdated();
-            }
+            const userRef = doc(db, "users", userId);
+            await updateDoc(userRef, { role: newRole });
+            toast({ title: 'Role Updated', description: `User role has been changed to ${newRole}.` });
+            onUserUpdated();
         } catch(e) {
+            console.error("Error updating role:", e);
             toast({ variant: 'destructive', title: 'Error', description: 'Failed to update user role.' });
         }
     };
@@ -178,11 +180,11 @@ const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUs
                 </TableHeader>
                 <TableBody>
                     {users.map((user) => (
-                        <TableRow key={user.loginId}>
+                        <TableRow key={user.id}>
                             <TableCell className="font-medium">{user.name}</TableCell>
                             <TableCell>{user.loginId}</TableCell>
                             <TableCell>
-                                <Select value={user.role} onValueChange={(value) => handleRoleChange(user.loginId, value as User['role'])}>
+                                <Select value={user.role} onValueChange={(value) => handleRoleChange(user.id, value as User['role'])}>
                                     <SelectTrigger className="w-[120px]">
                                         <SelectValue />
                                     </SelectTrigger>
@@ -209,7 +211,7 @@ const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUs
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
                                             <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => onUserDeleted(user.loginId)} className="bg-destructive hover:bg-destructive/90">
+                                            <AlertDialogAction onClick={() => onUserDeleted(user.id)} className="bg-destructive hover:bg-destructive/90">
                                                 Delete
                                             </AlertDialogAction>
                                         </AlertDialogFooter>
@@ -229,34 +231,28 @@ export default function UserManagementPage() {
     const [users, setUsers] = useState<User[]>([]);
     const { toast } = useToast();
 
-    const fetchUsers = () => {
+    const fetchUsers = useCallback(async () => {
         try {
-            const usersDb: UserData = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
-            const userList: User[] = Object.entries(usersDb).map(([loginId, data]) => ({
-                loginId,
-                name: data.name,
-                role: data.role,
-                password: data.password, // This is kept for consistency but should not be displayed
-            }));
+            const querySnapshot = await getDocs(collection(db, "users"));
+            const userList = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as User));
             setUsers(userList);
         } catch (e) {
             console.error("Failed to fetch users", e);
             toast({ variant: 'destructive', title: 'Error', description: 'Could not load user data.' });
         }
-    };
+    }, [toast]);
 
     useEffect(() => {
         fetchUsers();
-    }, []);
+    }, [fetchUsers]);
 
-    const handleUserDeleted = (loginId: string) => {
+    const handleUserDeleted = async (id: string) => {
         try {
-            const usersDb: UserData = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
-            delete usersDb[loginId];
-            localStorage.setItem('jls_users_db', JSON.stringify(usersDb));
-            toast({ title: 'User Deleted', description: `User with ID ${loginId} has been removed.`, variant: 'destructive' });
+            await deleteDoc(doc(db, "users", id));
+            toast({ title: 'User Deleted', description: `User has been removed.`, variant: 'destructive' });
             fetchUsers(); // Refresh the list
         } catch (e) {
+             console.error("Error deleting user: ", e);
              toast({ variant: 'destructive', title: 'Error', description: 'Failed to delete user.' });
         }
     };

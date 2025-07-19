@@ -1,13 +1,15 @@
 
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2, Edit } from 'lucide-react';
 import Image from 'next/image';
+import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
 
+import { db } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import {
@@ -50,6 +52,7 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import { Skeleton } from '@/components/ui/skeleton';
 
 
 // Define the schema for a customer
@@ -128,7 +131,7 @@ const handlePhotoUpload = async (file: File): Promise<string> => {
     }
 };
 
-const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (customer: Customer) => void }) => {
+const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => void }) => {
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isGuarantorOpen, setIsGuarantorOpen] = useState(false);
@@ -173,20 +176,18 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
       setPhotoPreview(null);
   }
 
-  const onSubmit = (data: Customer) => {
-    const newCustomer: Customer = {
-      ...data,
-      id: `C-${Date.now()}`
-    };
-    
-    const existingCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-    localStorage.setItem('jls_customers', JSON.stringify([...existingCustomers, newCustomer]));
-    
-    onCustomerAdded(newCustomer);
-    toast({ title: "Success", description: "Customer registered successfully." });
-    reset();
-    setPhotoPreview(null);
-    setIsOpen(false);
+  const onSubmit = async (data: Customer) => {
+    try {
+        await addDoc(collection(db, "customers"), data);
+        onCustomerAdded();
+        toast({ title: "Success", description: "Customer registered successfully." });
+        reset();
+        setPhotoPreview(null);
+        setIsOpen(false);
+    } catch (error) {
+        console.error("Error adding customer: ", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to register customer." });
+    }
   };
 
   return (
@@ -302,7 +303,7 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
             </div>
             <DialogFooter className="mt-4">
               <Button type="submit" disabled={isSubmitting || isUploading}>
-                {isSubmitting || isUploading ? 'Saving...' : 'Save Customer'}
+                {isSubmitting || isUploading ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/> Saving...</> : 'Save Customer'}
               </Button>
             </DialogFooter>
           </form>
@@ -349,14 +350,21 @@ const EditCustomerDialog = ({ customer, onCustomerUpdated }: { customer: Custome
     setPhotoPreview(null);
   };
 
-  const onSubmit = (data: Customer) => {
-    const existingCustomers: Customer[] = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-    const updatedCustomers = existingCustomers.map(c => (c.id === customer.id ? { ...c, ...data } : c));
-    localStorage.setItem('jls_customers', JSON.stringify(updatedCustomers));
-    
-    onCustomerUpdated();
-    toast({ title: "Success", description: "Customer details updated successfully." });
-    setIsOpen(false);
+  const onSubmit = async (data: Customer) => {
+    if (!customer.id) {
+        toast({ variant: "destructive", title: "Error", description: "Customer ID is missing." });
+        return;
+    }
+    try {
+        const customerRef = doc(db, "customers", customer.id);
+        await updateDoc(customerRef, data);
+        onCustomerUpdated();
+        toast({ title: "Success", description: "Customer details updated successfully." });
+        setIsOpen(false);
+    } catch (error) {
+        console.error("Error updating customer: ", error);
+        toast({ variant: "destructive", title: "Error", description: "Failed to update customer details." });
+    }
   };
 
   return (
@@ -482,7 +490,37 @@ const EditCustomerDialog = ({ customer, onCustomerUpdated }: { customer: Custome
 };
 
 
-const CustomerList = ({ customers, onDeleteCustomer, onCustomerUpdated }: { customers: Customer[], onDeleteCustomer: (id: string) => void, onCustomerUpdated: () => void }) => {
+const CustomerList = ({ customers, isLoading, onDeleteCustomer, onCustomerUpdated }: { customers: Customer[], isLoading: boolean, onDeleteCustomer: (id: string) => void, onCustomerUpdated: () => void }) => {
+    
+    if (isLoading) {
+        return (
+            <div className="mt-6 rounded-lg border">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead><Skeleton className="h-5 w-24" /></TableHead>
+                            <TableHead><Skeleton className="h-5 w-32" /></TableHead>
+                            <TableHead><Skeleton className="h-5 w-24" /></TableHead>
+                            <TableHead><Skeleton className="h-5 w-48" /></TableHead>
+                            <TableHead className="text-right"><Skeleton className="h-5 w-20" /></TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {[...Array(3)].map((_, i) => (
+                            <TableRow key={i}>
+                                <TableCell><Skeleton className="h-5 w-24" /></TableCell>
+                                <TableCell><Skeleton className="h-5 w-32" /></TableCell>
+                                <TableCell><Skeleton className="h-5 w-24" /></TableCell>
+                                <TableCell><Skeleton className="h-5 w-48" /></TableCell>
+                                <TableCell className="text-right"><Skeleton className="h-5 w-20" /></TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </div>
+        );
+    }
+    
     if (customers.length === 0) {
         return (
             <div className="flex flex-col items-center justify-center text-center p-10 border-2 border-dashed rounded-lg mt-6">
@@ -549,41 +587,62 @@ const CustomerList = ({ customers, onDeleteCustomer, onCustomerUpdated }: { cust
 
 export default function CustomersPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
     const { toast } = useToast();
 
-    const fetchCustomers = () => {
+    const fetchCustomers = useCallback(async () => {
+        setIsLoading(true);
         try {
-            const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
-            setCustomers(storedCustomers);
+            const querySnapshot = await getDocs(collection(db, "customers"));
+            const customersData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Customer));
+            setCustomers(customersData);
         } catch (e) {
-            console.error("Failed to parse customers from localStorage", e);
+            console.error("Failed to fetch customers from Firestore", e);
+            toast({ variant: "destructive", title: "Error", description: "Could not load customer data." });
             setCustomers([]);
+        } finally {
+            setIsLoading(false);
         }
-    }
+    }, [toast]);
 
     useEffect(() => {
         fetchCustomers();
-    }, []);
-
-    const handleCustomerAdded = (customer: Customer) => {
-        setCustomers(prev => [...prev, customer]);
-    };
+    }, [fetchCustomers]);
     
-    const handleDeleteCustomer = (id: string) => {
-        const updatedCustomers = customers.filter(c => c.id !== id);
-        localStorage.setItem('jls_customers', JSON.stringify(updatedCustomers));
+    const handleDeleteCustomer = async (id: string) => {
+        try {
+            const batch = writeBatch(db);
 
-        // Also delete associated loans
-        const loans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-        const updatedLoans = loans.filter((loan: { customerId: string }) => loan.customerId !== id);
-        localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
+            // Delete the customer
+            const customerRef = doc(db, "customers", id);
+            batch.delete(customerRef);
 
-        setCustomers(updatedCustomers);
-        toast({
-            title: "Customer Deleted",
-            description: `Customer with ID ${id} and their loans have been removed.`,
-            variant: "destructive"
-        });
+            // Find and delete associated loans
+            const loansQuery = query(collection(db, "loans"), where("customerId", "==", id));
+            const loansSnapshot = await getDocs(loansQuery);
+            
+            // For each loan, find and delete its EMIs
+            for (const loanDoc of loansSnapshot.docs) {
+                const loanId = loanDoc.id;
+                batch.delete(loanDoc.ref); // Delete loan
+                
+                const emisQuery = query(collection(db, "emis"), where("loanId", "==", loanId));
+                const emisSnapshot = await getDocs(emisQuery);
+                emisSnapshot.forEach(emiDoc => batch.delete(emiDoc.ref)); // Delete EMIs
+            }
+            
+            await batch.commit();
+
+            toast({
+                title: "Customer Deleted",
+                description: `Customer and all associated data have been removed.`,
+                variant: "destructive"
+            });
+            fetchCustomers(); // Refresh the list
+        } catch (error) {
+            console.error("Error deleting customer and related data: ", error);
+            toast({ variant: "destructive", title: "Error", description: "Failed to delete customer." });
+        }
     }
 
     return (
@@ -593,10 +652,10 @@ export default function CustomersPage() {
                     <CardTitle>Customer Management</CardTitle>
                     <CardDescription>Register new customers and manage existing ones.</CardDescription>
                 </div>
-                <CustomerRegistrationForm onCustomerAdded={handleCustomerAdded} />
+                <CustomerRegistrationForm onCustomerAdded={fetchCustomers} />
             </CardHeader>
             <CardContent>
-                <CustomerList customers={customers} onDeleteCustomer={handleDeleteCustomer} onCustomerUpdated={fetchCustomers} />
+                <CustomerList customers={customers} isLoading={isLoading} onDeleteCustomer={handleDeleteCustomer} onCustomerUpdated={fetchCustomers} />
             </CardContent>
         </Card>
     );

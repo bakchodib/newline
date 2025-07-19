@@ -4,6 +4,8 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AtSign, Lock, LogIn } from "lucide-react";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,62 +21,71 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
 
-// Initial set of users, will be stored in localStorage
-const initialUsers = {
-  "admin@jls.com": { password: "password", role: "admin", name: "Admin User" },
-  "agent@jls.com": { password: "password", role: "agent", name: "Agent Smith" },
-};
-
 export default function LoginPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [email, setEmail] = useState("");
+  const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // On first load, check if the user database exists in localStorage.
-    // If not, initialize it with the default admin/agent users.
-    if (!localStorage.getItem("jls_users_db")) {
-      localStorage.setItem("jls_users_db", JSON.stringify(initialUsers));
+    // Check if user is already logged in
+    if (localStorage.getItem("jls_user")) {
+        router.push('/dashboard');
     }
-  }, []);
+  }, [router]);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) {
+    if (!loginId || !password) {
         toast({
             variant: "destructive",
             title: "Validation Error",
-            description: "Email/ID and password are required.",
+            description: "Login ID and password are required.",
         });
         return;
     }
     setIsLoading(true);
 
-    setTimeout(() => {
-      // Read the user database from localStorage
-      const usersDb = JSON.parse(localStorage.getItem("jls_users_db") || "{}");
-      const user = usersDb[email as keyof typeof usersDb];
+    try {
+        const usersRef = collection(db, "users");
+        const q = query(usersRef, where("loginId", "==", loginId));
+        const querySnapshot = await getDocs(q);
 
-      if (user && user.password === password) {
+        if (querySnapshot.empty) {
+            throw new Error("Invalid credentials");
+        }
+
+        const userDoc = querySnapshot.docs[0];
+        const user = userDoc.data();
+
+        if (user && user.password === password) {
+            toast({
+            title: "Login Successful",
+            description: `Welcome back, ${user.name}!`,
+            });
+            // Store user session info
+            const userData = {
+                id: userDoc.id,
+                loginId: user.loginId,
+                name: user.name,
+                role: user.role,
+            };
+            localStorage.setItem("jls_user", JSON.stringify(userData));
+            router.push("/dashboard");
+        } else {
+            throw new Error("Invalid credentials");
+        }
+    } catch (error) {
+        console.error("Login failed:", error);
         toast({
-          title: "Login Successful",
-          description: `Welcome back, ${user.name}!`,
+            variant: "destructive",
+            title: "Login Failed",
+            description: "Invalid credentials. Please try again.",
         });
-        // Simulate session by storing user data in localStorage
-        // The email key is used to store the login ID (which can be an email or phone number)
-        localStorage.setItem("jls_user", JSON.stringify({ email, ...user }));
-        router.push("/dashboard");
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Login Failed",
-          description: "Invalid credentials. Please try again.",
-        });
+    } finally {
         setIsLoading(false);
-      }
-    }, 1000); // Simulate network delay
+    }
   };
 
   return (
@@ -103,8 +114,8 @@ export default function LoginPage() {
                   type="text"
                   placeholder="e.g., admin@jls.com or +919876543210"
                   required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={loginId}
+                  onChange={(e) => setLoginId(e.target.value)}
                   className="pl-10"
                   disabled={isLoading}
                 />
