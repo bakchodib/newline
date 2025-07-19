@@ -43,6 +43,8 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { LoanApplication } from '@/app/dashboard/loans/applications/page';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
 
 
 const loanSchema = z.object({
@@ -53,6 +55,12 @@ const loanSchema = z.object({
   tenure: z.coerce.number().int().min(1, "Tenure must be at least 1 month."),
   disbursalDate: z.date({ required_error: "Disbursal date is required." }),
   processingFee: z.coerce.number().min(0).optional(),
+  status: z.enum(['active', 'closed']).default('active'),
+  closureDetails: z.object({
+    closureDate: z.date(),
+    closureCharges: z.number(),
+    remarks: z.string().optional(),
+  }).optional(),
 });
 
 export type Loan = z.infer<typeof loanSchema>;
@@ -98,7 +106,7 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                 <Button variant="ghost" size="icon">
+                 <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
                     <PlusCircle className="h-4 w-4 text-green-600" />
                 </Button>
             </DialogTrigger>
@@ -121,55 +129,159 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
     )
 };
 
+const closureFormSchema = z.object({
+    closureDate: z.date(),
+    closureCharges: z.coerce.number().min(0).default(0),
+    remarks: z.string().optional(),
+});
+type ClosureForm = z.infer<typeof closureFormSchema>;
 
 const EarlyCloseDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, onLoanUpdated: () => void }) => {
     const { toast } = useToast();
-    const [outstandingAmount, setOutstandingAmount] = useState(0);
+    const [isOpen, setIsOpen] = useState(false);
+    const [calculations, setCalculations] = useState({
+        principal: 0,
+        interest: 0,
+        total: 0
+    });
+    
+    const form = useForm<ClosureForm>({
+        resolver: zodResolver(closureFormSchema),
+        defaultValues: { closureDate: new Date(), closureCharges: 0, remarks: "" }
+    });
+    const { register, control, watch, handleSubmit, formState: { isSubmitting } } = form;
 
-    const calculateOutstanding = () => {
+    const closureDate = watch('closureDate');
+    const closureCharges = watch('closureCharges');
+
+    useEffect(() => {
         const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+        const paidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
         const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
-        const totalOutstanding = unpaidEmis.reduce((sum, emi) => sum + emi.amount, 0);
-        setOutstandingAmount(totalOutstanding);
-    };
 
-    const handleEarlyClose = () => {
-        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
-        const updatedEmis = allEmis.map(emi => {
-            if (emi.loanId === loan.id && emi.status === 'unpaid') {
-                return { ...emi, status: 'paid' as const };
-            }
-            return emi;
+        if (unpaidEmis.length === 0) {
+            setCalculations({ principal: 0, interest: 0, total: 0 });
+            return;
+        }
+
+        const monthlyRate = loan.interestRate / 12 / 100;
+        let outstandingPrincipal = loan.amount;
+
+        // Simplified principal reduction based on paid EMIs
+        // A real amortization schedule would be more accurate
+        const emiAmount = unpaidEmis[0]?.amount || 0;
+        for(let i = 0; i < paidEmis.length; i++) {
+            const interestPortion = outstandingPrincipal * monthlyRate;
+            const principalPortion = emiAmount - interestPortion;
+            outstandingPrincipal -= principalPortion;
+        }
+        
+        const lastDueDate = paidEmis.length > 0 ? new Date(paidEmis[paidEmis.length - 1].dueDate) : new Date(loan.disbursalDate);
+        const daysSinceLastDue = Math.max(0, (closureDate.getTime() - lastDueDate.getTime()) / (1000 * 3600 * 24));
+        const interestTillDate = (outstandingPrincipal * (loan.interestRate / 100) / 365) * daysSinceLastDue;
+
+        setCalculations({
+            principal: parseFloat(outstandingPrincipal.toFixed(2)),
+            interest: parseFloat(interestTillDate.toFixed(2)),
+            total: parseFloat((outstandingPrincipal + interestTillDate + Number(closureCharges)).toFixed(2))
         });
 
-        localStorage.setItem('jls_emis', JSON.stringify(updatedEmis));
-        toast({ title: "Loan Closed", description: `Loan ${loan.id} has been marked as early closed.` });
-        onLoanUpdated(); // This will re-render the calling component
+    }, [closureDate, closureCharges, loan, isOpen]);
+
+    const handleEarlyClose = (data: ClosureForm) => {
+        // 1. Update Loan Status and add closure details
+        const allLoans: (Loan & {id: string})[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
+        const updatedLoans = allLoans.map(l => {
+            if (l.id === loan.id) {
+                return {
+                    ...l,
+                    status: 'closed' as const,
+                    closureDetails: {
+                        closureDate: data.closureDate,
+                        closureCharges: data.closureCharges,
+                        remarks: data.remarks,
+                    }
+                };
+            }
+            return l;
+        });
+        localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
+
+        // 2. Remove future EMIs from master list
+        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+        const remainingEmis = allEmis.filter(emi => !(emi.loanId === loan.id && emi.status === 'unpaid'));
+        localStorage.setItem('jls_emis', JSON.stringify(remainingEmis));
+
+        toast({ title: "Loan Closed Successfully", description: `Loan ${loan.id} has been marked as closed.` });
+        onLoanUpdated();
+        setIsOpen(false);
     };
 
     return (
-        <AlertDialog onOpenChange={(open) => { if(open) calculateOutstanding() }}>
-            <AlertDialogTrigger asChild>
-                 <Button variant="ghost" size="icon">
+        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+            <DialogTrigger asChild>
+                <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
                     <XCircle className="h-4 w-4 text-red-600" />
                 </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-                <AlertDialogHeader>
-                    <AlertDialogTitle>Confirm Early Closure</AlertDialogTitle>
-                    <AlertDialogDescription>
-                        Are you sure you want to close this loan? The total outstanding amount is 
-                        <strong className="text-foreground"> Rs. {outstandingAmount.toLocaleString()}</strong>. This action will mark all remaining EMIs as paid and cannot be undone.
-                    </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleEarlyClose} className="bg-destructive hover:bg-destructive/90">
-                        Confirm & Close Loan
-                    </AlertDialogAction>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
+            </DialogTrigger>
+            <DialogContent>
+                <DialogHeader>
+                    <DialogTitle>Early Loan Closure: {loan.id}</DialogTitle>
+                    <DialogDescription>
+                       Finalize the early closure of this loan. Calculations are estimates.
+                    </DialogDescription>
+                </DialogHeader>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-4 my-4 p-4 border rounded-lg">
+                    <div className="font-medium text-muted-foreground">Outstanding Principal</div>
+                    <div className="text-right font-bold">Rs. {calculations.principal.toLocaleString()}</div>
+                    <div className="font-medium text-muted-foreground">Interest up to Closure Date</div>
+                    <div className="text-right font-bold">Rs. {calculations.interest.toLocaleString()}</div>
+                    <div className="font-medium text-muted-foreground">Closure Charges</div>
+                    <div className="text-right font-bold">Rs. {Number(closureCharges).toLocaleString()}</div>
+                    <div className="col-span-2 border-t my-2"></div>
+                    <div className="font-semibold text-lg text-primary">Total Payable Amount</div>
+                    <div className="text-right font-extrabold text-lg text-primary">Rs. {calculations.total.toLocaleString()}</div>
+                </div>
+                 <form onSubmit={handleSubmit(handleEarlyClose)} className="space-y-4">
+                     <div>
+                        <Label htmlFor="closureDate">Closure Date</Label>
+                        <Controller
+                        name="closureDate"
+                        control={control}
+                        render={({ field }) => (
+                            <Popover>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant={"outline"}
+                                        className={cn("w-full justify-start text-left font-normal", !field.value && "text-muted-foreground")}
+                                    >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0">
+                                    <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                                </PopoverContent>
+                            </Popover>
+                        )}
+                        />
+                    </div>
+                    <div>
+                        <Label htmlFor="closureCharges">Closure Charges (Rs.)</Label>
+                        <Input id="closureCharges" type="number" {...register('closureCharges')} />
+                    </div>
+                     <div>
+                        <Label htmlFor="remarks">Remarks (Optional)</Label>
+                        <Textarea id="remarks" {...register('remarks')} />
+                    </div>
+                    <DialogFooter>
+                         <Button type="submit" variant="destructive" disabled={isSubmitting}>
+                           {isSubmitting ? 'Processing...' : 'Confirm & Close Loan'}
+                        </Button>
+                    </DialogFooter>
+                </form>
+            </DialogContent>
+        </Dialog>
     );
 };
 
@@ -206,7 +318,7 @@ const EditLoanDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, on
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                <Button variant="ghost" size="icon">
+                <Button variant="ghost" size="icon" disabled={loan.status === 'closed'}>
                     <Edit className="h-4 w-4" />
                 </Button>
             </DialogTrigger>
@@ -293,9 +405,9 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                         <TableHead>Loan ID</TableHead>
                         <TableHead>Customer</TableHead>
                         <TableHead>Amount</TableHead>
-                        <TableHead>Interest</TableHead>
                         <TableHead>Tenure</TableHead>
                         <TableHead>Date</TableHead>
+                        <TableHead>Status</TableHead>
                         <TableHead className="text-center">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
@@ -303,13 +415,17 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                     {loans.map((loan) => {
                         const customer = findCustomer(loan.customerId);
                         return (
-                            <TableRow key={loan.id}>
+                            <TableRow key={loan.id} className={cn(loan.status === 'closed' && 'bg-muted/50 text-muted-foreground')}>
                                 <TableCell className="font-medium">{loan.id}</TableCell>
                                 <TableCell>{customer?.name || 'Unknown'}</TableCell>
                                 <TableCell>Rs. {loan.amount.toLocaleString()}</TableCell>
-                                <TableCell>{loan.interestRate}%</TableCell>
                                 <TableCell>{loan.tenure} m</TableCell>
                                 <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
+                                <TableCell>
+                                    <Badge variant={loan.status === 'closed' ? 'destructive' : 'default'}>
+                                        {loan.status.charAt(0).toUpperCase() + loan.status.slice(1)}
+                                    </Badge>
+                                </TableCell>
                                 <TableCell className="text-center">
                                     {customer && (
                                         <TooltipProvider>
