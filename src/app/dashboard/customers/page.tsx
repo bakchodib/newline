@@ -9,7 +9,7 @@ import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2, E
 import Image from 'next/image';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
 
-import { db } from '@/lib/firebase';
+import { db, auth } from '@/lib/firebase';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import {
@@ -177,6 +177,15 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
   }
 
   const onSubmit = async (data: Customer) => {
+    if (!auth.currentUser) {
+        toast({
+            variant: "destructive",
+            title: "Authentication Error",
+            description: "You must be logged in to register a customer. Please log out and log back in.",
+        });
+        return;
+    }
+
     try {
         await addDoc(collection(db, "customers"), data);
         onCustomerAdded();
@@ -186,11 +195,11 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: () => 
         setIsOpen(false);
     } catch (error: any) {
         console.error("Error adding customer: ", error);
-        let description = "Failed to register customer.";
+        let description = "Failed to register customer. An unknown error occurred.";
         if (error.code === 'permission-denied') {
             description = "You do not have permission to add customers. Please check your login or contact an admin.";
         }
-        toast({ variant: "destructive", title: "Error", description });
+        toast({ variant: "destructive", title: "Registration Error", description });
     }
   };
 
