@@ -1,3 +1,4 @@
+
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -19,7 +20,8 @@ import {
   CheckSquare,
   Banknote,
   Users2,
-  ChevronDown
+  ChevronDown,
+  UserPlus
 } from 'lucide-react';
 
 import { useAuth } from '@/hooks/useAuth';
@@ -74,7 +76,16 @@ const navItems: NavItem[] = [
   },
   { href: '/dashboard/emi-calculator', icon: Calculator, label: 'EMI Calculator', roles: ['admin', 'agent', 'customer'] },
   { href: '/dashboard/reports', icon: FileText, label: 'Reports', roles: ['admin'] },
-  { href: '/dashboard/user-management', icon: Users2, label: 'User Management', roles: ['admin'] },
+  { 
+    href: '/dashboard/user-management', 
+    icon: Users2, 
+    label: 'User Management', 
+    roles: ['admin'],
+    subItems: [
+      { href: '/dashboard/user-management', icon: Users, label: 'All Users', roles: ['admin']},
+      { href: '/dashboard/user-management/new', icon: UserPlus, label: 'Add User', roles: ['admin']},
+    ] 
+  },
 ];
 
 function SidebarNav({ userRole, onLinkClick }: { userRole: string | undefined, onLinkClick: () => void }) {
