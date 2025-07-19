@@ -3,15 +3,17 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-// TODO: Add your Firebase project configuration here
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXX",
-  authDomain: "your-project-id.firebaseapp.com",
-  projectId: "your-project-id",
-  storageBucket: "your-project-id.appspot.com",
-  messagingSenderId: "your-sender-id",
-  appId: "your-app-id"
+  apiKey: "AIzaSyCL77cBUaywr84qDscxCyy0PM_gRnxp7p0",
+  authDomain: "jlsfinalhai.firebaseapp.com",
+  projectId: "jlsfinalhai",
+  storageBucket: "jlsfinalhai.appspot.com",
+  messagingSenderId: "90437797359",
+  appId: "1:90437797359:web:ee86797f9863e64a7ea21a",
+  measurementId: "G-ZSV85HDRT1"
 };
+
 
 // Initialize Firebase
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
