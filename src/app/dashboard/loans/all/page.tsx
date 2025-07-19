@@ -41,11 +41,16 @@ import { Calendar } from '@/components/ui/calendar';
 import type { Customer } from '@/app/dashboard/customers/page';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import type { LoanApplication } from '@/app/dashboard/loans/applications/page';
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 
+const topUpHistorySchema = z.object({
+  topUpDate: z.date(),
+  topUpAmount: z.number(),
+  newTenure: z.number(),
+  previousOutstanding: z.number(),
+});
 
 const loanSchema = z.object({
   id: z.string().optional(),
@@ -61,6 +66,7 @@ const loanSchema = z.object({
     closureCharges: z.number(),
     remarks: z.string().optional(),
   }).optional(),
+  topupHistory: z.array(topUpHistorySchema).optional(),
 });
 
 export type Loan = z.infer<typeof loanSchema>;
@@ -74,33 +80,112 @@ type Emi = {
   status: 'paid' | 'unpaid';
 };
 
+const generateEmiSchedule = (loanId: string, amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
+    const monthlyRate = annualRate / 12 / 100;
+    const emiAmount = (amount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+    const schedule = [];
+
+    for (let i = 1; i <= tenureMonths; i++) {
+        const dueDate = new Date(startDate);
+        dueDate.setMonth(startDate.getMonth() + i);
+        schedule.push({
+            id: `EMI-${loanId}-${i}`,
+            loanId: loanId,
+            installment: i,
+            dueDate: dueDate.toISOString(),
+            amount: parseFloat(emiAmount.toFixed(2)),
+            status: 'unpaid' as const,
+        });
+    }
+    return schedule;
+};
+
+const topUpFormSchema = z.object({
+    topUpAmount: z.coerce.number().min(1, "Top-up amount must be positive."),
+    newTenure: z.coerce.number().int().min(1, "New tenure must be at least 1 month."),
+    topUpDate: z.date(),
+});
+type TopUpForm = z.infer<typeof topUpFormSchema>;
 
 const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: string}, customer: Customer, onLoanUpdated: () => void }) => {
     const [isOpen, setIsOpen] = useState(false);
     const { toast } = useToast();
-    const [amount, setAmount] = useState(0);
+    const [outstandingPrincipal, setOutstandingPrincipal] = useState(0);
 
-    const handleSubmit = () => {
-        if (amount <= 0) {
-            toast({ variant: 'destructive', title: "Invalid Amount", description: "Top-up amount must be greater than zero." });
+    const form = useForm<TopUpForm>({
+        resolver: zodResolver(topUpFormSchema),
+        defaultValues: { topUpDate: new Date(), newTenure: loan.tenure }
+    });
+     const { register, control, handleSubmit, formState: { errors, isSubmitting } } = form;
+
+    useEffect(() => {
+        if (!isOpen) return;
+        
+        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+        const paidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
+        const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
+
+        if (unpaidEmis.length === 0) {
+            setOutstandingPrincipal(0);
             return;
         }
 
-        const newApplication: LoanApplication = {
-            id: `APP-${Date.now()}`,
-            customerId: loan.customerId,
-            amount: amount,
-            status: 'pending',
-            applicationDate: new Date(),
-        };
-
-        const existingApps = JSON.parse(localStorage.getItem('jls_pending_loans') || '[]');
-        localStorage.setItem('jls_pending_loans', JSON.stringify([...existingApps, newApplication]));
+        const monthlyRate = loan.interestRate / 12 / 100;
+        let principal = loan.amount;
         
-        toast({ title: "Top-up Application Submitted", description: `A new loan application for ${customer.name} has been created.` });
-        setIsOpen(false);
-        setAmount(0); // Reset amount
+        // This is a simplified calculation. Real amortization would be more complex.
+        const emiAmount = unpaidEmis[0]?.amount || 0;
+        for(let i = 0; i < paidEmis.length; i++) {
+            const interestPortion = principal * monthlyRate;
+            const principalPortion = emiAmount - interestPortion;
+            principal -= principalPortion;
+        }
+        setOutstandingPrincipal(parseFloat(principal.toFixed(2)));
+
+    }, [isOpen, loan]);
+
+
+    const handleTopUpSubmit = (data: TopUpForm) => {
+        const allLoans: (Loan & {id: string})[] = JSON.parse(localStorage.getItem('jls_loans') || '[]');
+        const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+
+        const newPrincipal = outstandingPrincipal + data.topUpAmount;
+
+        // 1. Update the loan object
+        const updatedLoans = allLoans.map(l => {
+            if (l.id === loan.id) {
+                const newTopUpRecord: z.infer<typeof topUpHistorySchema> = {
+                    topUpDate: data.topUpDate,
+                    topUpAmount: data.topUpAmount,
+                    newTenure: data.newTenure,
+                    previousOutstanding: outstandingPrincipal,
+                };
+                return {
+                    ...l,
+                    amount: newPrincipal, // Update amount to new total principal
+                    tenure: data.newTenure,
+                    disbursalDate: data.topUpDate, // The "new" disbursal date is the top-up date
+                    topupHistory: [...(l.topupHistory || []), newTopUpRecord],
+                };
+            }
+            return l;
+        });
+        const updatedLoan = updatedLoans.find(l => l.id === loan.id);
+        if(!updatedLoan) return;
+
+        // 2. Remove old unpaid EMIs for this loan
+        const remainingEmis = allEmis.filter(emi => !(emi.loanId === loan.id && emi.status === 'unpaid'));
+
+        // 3. Generate new EMI schedule
+        const newEmiSchedule = generateEmiSchedule(loan.id, newPrincipal, loan.interestRate, data.newTenure, data.topUpDate);
+
+        // 4. Save everything back to localStorage
+        localStorage.setItem('jls_loans', JSON.stringify(updatedLoans));
+        localStorage.setItem('jls_emis', JSON.stringify([...remainingEmis, ...newEmiSchedule]));
+
+        toast({ title: "Loan Topped Up", description: `Loan ${loan.id} has been topped up. New EMI schedule is generated.` });
         onLoanUpdated();
+        setIsOpen(false);
     };
 
     return (
@@ -114,16 +199,50 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
                 <DialogHeader>
                     <DialogTitle>Loan Top-up for {customer.name}</DialogTitle>
                     <DialogDescription>
-                        Enter the additional amount for the new loan. This will create a new application that needs to go through the approval process.
+                        Current outstanding principal is Rs. {outstandingPrincipal.toLocaleString()}.
+                        Add a top-up amount and define the new tenure for the combined loan.
                     </DialogDescription>
                 </DialogHeader>
-                <div className="space-y-4 py-4">
-                    <Label htmlFor="topup-amount">Top-up Amount (Rs.)</Label>
-                    <Input id="topup-amount" type="number" value={amount} onChange={(e) => setAmount(Number(e.target.value))} />
-                </div>
-                <DialogFooter>
-                    <Button onClick={handleSubmit}>Submit Application</Button>
-                </DialogFooter>
+                 <form onSubmit={handleSubmit(handleTopUpSubmit)} className="space-y-4 py-4">
+                    <div>
+                        <Label htmlFor="topUpAmount">Top-up Amount (Rs.)</Label>
+                        <Input id="topUpAmount" type="number" {...register('topUpAmount')} />
+                        {errors.topUpAmount && <p className="text-destructive text-sm mt-1">{errors.topUpAmount.message}</p>}
+                    </div>
+                    <div>
+                        <Label>New Total Principal</Label>
+                        <Input readOnly disabled value={`Rs. ${(outstandingPrincipal + (form.watch('topUpAmount') || 0)).toLocaleString()}`} />
+                    </div>
+                     <div>
+                        <Label htmlFor="newTenure">New Tenure (Months)</Label>
+                        <Input id="newTenure" type="number" {...register('newTenure')} />
+                        {errors.newTenure && <p className="text-destructive text-sm mt-1">{errors.newTenure.message}</p>}
+                    </div>
+                    <div>
+                        <Label>Top-up Date</Label>
+                        <Controller
+                            name="topUpDate"
+                            control={control}
+                            render={({ field }) => (
+                                <Popover>
+                                    <PopoverTrigger asChild>
+                                        <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !field.value && "text-muted-foreground")}>
+                                            <CalendarIcon className="mr-2 h-4 w-4" />
+                                            {field.value ? format(field.value, "PPP") : <span>Pick a date</span>}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto p-0">
+                                        <Calendar mode="single" selected={field.value} onSelect={field.onChange} initialFocus />
+                                    </PopoverContent>
+                                </Popover>
+                            )}
+                        />
+                         {errors.topUpDate && <p className="text-destructive text-sm mt-1">{errors.topUpDate.message}</p>}
+                    </div>
+                    <DialogFooter>
+                        <Button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Processing...' : 'Confirm Top-up'}</Button>
+                    </DialogFooter>
+                </form>
             </DialogContent>
         </Dialog>
     )
@@ -155,6 +274,8 @@ const EarlyCloseDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, 
     const closureCharges = watch('closureCharges');
 
     useEffect(() => {
+        if (!isOpen) return;
+
         const allEmis: Emi[] = JSON.parse(localStorage.getItem('jls_emis') || '[]');
         const paidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'paid');
         const unpaidEmis = allEmis.filter(emi => emi.loanId === loan.id && emi.status === 'unpaid');
@@ -477,7 +598,12 @@ export default function AllLoansPage() {
             const storedCustomers = JSON.parse(localStorage.getItem('jls_customers') || '[]');
             setCustomers(storedCustomers);
             const storedLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
-            setLoans(storedLoans.map((l: Loan & {id: string}) => ({...l, disbursalDate: new Date(l.disbursalDate)})));
+            setLoans(storedLoans.map((l: any) => ({
+                ...l, 
+                disbursalDate: new Date(l.disbursalDate),
+                closureDetails: l.closureDetails ? { ...l.closureDetails, closureDate: new Date(l.closureDetails.closureDate) } : undefined,
+                topupHistory: l.topupHistory ? l.topupHistory.map((th: any) => ({ ...th, topUpDate: new Date(th.topUpDate) })) : [],
+            })));
         } catch (e) {
             console.error("Failed to parse data from localStorage", e);
             setCustomers([]);
@@ -505,3 +631,4 @@ export default function AllLoansPage() {
         </div>
     );
 }
+

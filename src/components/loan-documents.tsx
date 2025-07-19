@@ -104,6 +104,9 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         setIsGenerating(true);
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
+            const originalDisbursalDate = loan.topupHistory && loan.topupHistory.length > 0 ? loan.disbursalDate : loan.disbursalDate;
+            const originalLoanAmount = loan.topupHistory && loan.topupHistory.length > 0 ? loan.topupHistory[0].previousOutstanding : loan.amount;
+            
             const emiScheduleData = generateEmiScheduleData(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
             const netDisbursedAmount = loan.amount - (loan.processingFee || 0);
 
@@ -139,18 +142,38 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text("Loan Details", 20, 95);
             doc.setFont('helvetica', 'normal');
             doc.text(`Loan ID: ${loan.id}`, 20, 103);
-            doc.text(`Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, 109);
+            doc.text(`Sanctioned Amount: Rs. ${originalLoanAmount.toLocaleString()}`, 20, 109);
             doc.text(`Processing Fee (5%): Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 20, 115);
             doc.setFont('helvetica', 'bold');
             doc.text(`Net Disbursed Amount: Rs. ${netDisbursedAmount.toLocaleString()}`, 20, 121);
             doc.setFont('helvetica', 'normal');
             doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 127);
             doc.text(`Tenure: ${loan.tenure} months`, 20, 133);
-            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, 139);
+            doc.text(`Disbursal Date: ${new Date(originalDisbursalDate).toLocaleDateString()}`, 20, 139);
             
+            let finalY = 145;
+
+            // Top-up History Section
+            if (loan.topupHistory && loan.topupHistory.length > 0) {
+                doc.setLineWidth(0.2);
+                doc.line(20, finalY, doc.internal.pageSize.getWidth() - 20, finalY);
+                finalY += 10;
+                doc.setFont('helvetica', 'bold');
+                doc.text("Top-up History", 20, finalY);
+                finalY += 8;
+                loan.topupHistory.forEach((topup, index) => {
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`- On ${new Date(topup.topUpDate).toLocaleDateString()}, topped up Rs. ${topup.topUpAmount.toLocaleString()}. New tenure: ${topup.newTenure} months.`, 20, finalY);
+                    finalY += 6;
+                });
+            }
+
+
             // EMI Schedule Table
+            finalY += 10;
             doc.setFont('helvetica', 'bold');
-            doc.text("EMI Schedule", 20, 152);
+            doc.text("EMI Schedule", 20, finalY);
+            finalY += 5;
 
             const tableHeaders = ['Month', 'Due Date', 'EMI (Rs.)', 'Principal', 'Interest', 'Balance'];
             if(type === 'card'){
@@ -168,37 +191,38 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             });
 
             doc.autoTable({
-                startY: 157,
+                startY: finalY,
                 head: [tableHeaders],
                 body: tableBody,
                 theme: 'grid',
                 headStyles: { fillColor: [34, 139, 34] },
             });
             
-            let finalY = (doc as any).lastAutoTable.finalY || 180;
+            finalY = (doc as any).lastAutoTable.finalY || finalY + 20;
 
             if(type === 'agreement'){
-                doc.addPage();
-                finalY = 20; 
+                if (finalY > 200) doc.addPage();
                 
+                let guarantorY = finalY > 200 ? 20 : finalY + 10;
+
                 if (customer.guarantor && customer.guarantor.name) {
                     doc.setFontSize(12);
                     doc.setFont('helvetica', 'bold');
-                    doc.text("Guarantor Details", 20, finalY);
+                    doc.text("Guarantor Details", 20, guarantorY);
                     doc.setFont('helvetica', 'normal');
-                    doc.text(`Name: ${customer.guarantor.name}`, 20, finalY + 8);
-                    doc.text(`Phone: ${customer.guarantor.phone}`, 20, finalY + 14);
-                    doc.text(`Address: ${customer.guarantor.address}`, 20, finalY + 20);
-                    finalY += 40;
+                    doc.text(`Name: ${customer.guarantor.name}`, 20, guarantorY + 8);
+                    doc.text(`Phone: ${customer.guarantor.phone}`, 20, guarantorY + 14);
+                    doc.text(`Address: ${customer.guarantor.address}`, 20, guarantorY + 20);
+                    guarantorY += 40;
                 }
 
                 doc.setFontSize(10);
                 doc.setFont('helvetica', 'bold');
-                doc.text("Terms and Conditions:", 20, finalY);
+                doc.text("Terms and Conditions:", 20, guarantorY);
                 doc.setFont('helvetica', 'normal');
                 const terms = `1. The borrower agrees to repay the loan amount with interest as per the EMI schedule.\n2. Late payment will attract a penalty fee of 2% per month on the overdue amount.\n3. All disputes are subject to the jurisdiction of the Anytown courts.`;
-                doc.text(terms, 20, finalY + 6, { maxWidth: doc.internal.pageSize.getWidth() - 40 });
-                finalY += 40;
+                doc.text(terms, 20, guarantorY + 6, { maxWidth: doc.internal.pageSize.getWidth() - 40 });
+                finalY = guarantorY + 40;
             } else {
                  finalY += 10;
             }
@@ -314,4 +338,5 @@ export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, custom
         return false;
     }
 };
+
 
