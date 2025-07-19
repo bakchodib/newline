@@ -48,6 +48,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+// import { useAuth } from '@/hooks/useAuth';
 
 const userSchema = z.object({
   name: z.string().min(3, "Name is required."),
@@ -59,7 +60,7 @@ const userSchema = z.object({
 export type User = z.infer<typeof userSchema> & { id: string, authUid: string };
 
 const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
-  const [isOpen, setIsOpen] = useState(false);
+  const [isOpen, setIsOpen] = useState(true); // Default to open
   const { toast } = useToast();
   const { register, handleSubmit, reset, control, formState: { errors, isSubmitting } } = useForm<z.infer<typeof userSchema>>({
     resolver: zodResolver(userSchema),
@@ -67,10 +68,15 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 
   const onSubmit = async (data: z.infer<typeof userSchema>) => {
     try {
-      // Step 1: Create user in Supabase Authentication
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: data.loginId,
         password: data.password,
+        options: {
+          data: {
+            name: data.name,
+            role: data.role
+          }
+        }
       });
 
       if (authError) throw authError;
@@ -78,18 +84,18 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
       
       const supabaseUser = authData.user;
 
-      // Step 2: Save user profile to our public 'users' table
-      const { password, ...userData } = data;
       const { error: dbError } = await supabase
         .from('users')
         .insert({
-          ...userData,
-          authUid: supabaseUser.id // Link profile to Auth user
+          name: data.name,
+          loginId: data.loginId,
+          role: data.role,
+          authUid: supabaseUser.id
         });
 
       if (dbError) throw dbError;
 
-      toast({ title: "User Added", description: `User ${data.name} has been created.` });
+      toast({ title: "User Added", description: `User ${data.name} has been created. You can now log in.` });
       onUserAdded();
       reset();
       setIsOpen(false);
@@ -107,10 +113,10 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
           Add New User
         </Button>
       </DialogTrigger>
-      <DialogContent>
+      <DialogContent onInteractOutside={(e) => e.preventDefault()}>
         <DialogHeader>
-          <DialogTitle>Add New User</DialogTitle>
-          <DialogDescription>Create a new account for an admin, agent or customer.</DialogDescription>
+          <DialogTitle>Create Your First Admin User</DialogTitle>
+          <DialogDescription>Create the first account to manage the system. You can add more users later.</DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
@@ -133,6 +139,7 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
             <Controller
                 name="role"
                 control={control}
+                defaultValue="admin"
                 render={({ field }) => (
                      <Select onValueChange={field.onChange} defaultValue={field.value}>
                         <SelectTrigger>
@@ -159,130 +166,37 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
   );
 };
 
-const UserList = ({ users, onUserUpdated, onUserDeleted }: { users: User[], onUserUpdated: () => void, onUserDeleted: (user: User) => void }) => {
-    const { toast } = useToast();
-
-    const handleRoleChange = async (userId: string, newRole: 'admin' | 'agent' | 'customer') => {
-        try {
-            const { error } = await supabase.from('users').update({ role: newRole }).eq('id', userId);
-            if (error) throw error;
-            toast({ title: 'Role Updated', description: `User role has been changed to ${newRole}.` });
-            onUserUpdated();
-        } catch(e: any) {
-            console.error("Error updating role:", e);
-            toast({ variant: 'destructive', title: 'Error', description: e.message || 'Failed to update user role.' });
-        }
-    };
-    
-    if (users.length === 0) {
-        return <p className="text-muted-foreground mt-4">No users found.</p>;
-    }
-
-    return (
-        <div className="mt-6 rounded-lg border">
-            <Table>
-                <TableHeader>
-                    <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Login ID</TableHead>
-                        <TableHead>Role</TableHead>
-                        <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                </TableHeader>
-                <TableBody>
-                    {users.map((user) => (
-                        <TableRow key={user.id}>
-                            <TableCell className="font-medium">{user.name}</TableCell>
-                            <TableCell>{user.loginId}</TableCell>
-                            <TableCell>
-                                <Select value={user.role} onValueChange={(value) => handleRoleChange(user.id, value as User['role'])}>
-                                    <SelectTrigger className="w-[120px]">
-                                        <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="admin">Admin</SelectItem>
-                                        <SelectItem value="agent">Agent</SelectItem>
-                                        <SelectItem value="customer">Customer</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </TableCell>
-                            <TableCell className="text-right">
-                                <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
-                                            <Trash2 className="h-4 w-4" />
-                                        </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                        <AlertDialogHeader>
-                                            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
-                                            <AlertDialogDescription>
-                                                This action cannot be undone. This will permanently delete the user account from both authentication and the database.
-                                            </AlertDialogDescription>
-                                        </AlertDialogHeader>
-                                        <AlertDialogFooter>
-                                            <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => onUserDeleted(user)} className="bg-destructive hover:bg-destructive/90">
-                                                Delete
-                                            </AlertDialogAction>
-                                        </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                </AlertDialog>
-                            </TableCell>
-                        </TableRow>
-                    ))}
-                </TableBody>
-            </Table>
-        </div>
-    );
-};
-
 
 export default function UserManagementPage() {
+    // const { user, isAuthChecked } = useAuth(); // Temporarily disabled
     const [users, setUsers] = useState<User[]>([]);
     const { toast } = useToast();
 
     const fetchUsers = useCallback(async () => {
-        try {
-            const { data, error } = await supabase.from('users').select('*');
-            if (error) throw error;
-            setUsers(data as User[]);
-        } catch (e: any) {
-            console.error("Failed to fetch users", e);
-            toast({ variant: 'destructive', title: 'Error', description: e.message || 'Could not load user data.' });
-        }
-    }, [toast]);
+        // No fetching needed on this temp page
+    }, []);
 
     useEffect(() => {
-        fetchUsers();
-    }, [fetchUsers]);
+        // No initial fetch needed
+    }, []);
 
-    const handleUserDeleted = async (user: User) => {
-        // Deleting a Supabase Auth user requires a special admin client, which should be done in a secure backend environment (e.g., a Supabase Edge Function).
-        // This client-side delete will only remove the user from the 'users' table.
-        // For a full implementation, a backend function is recommended to delete the Auth user.
-        try {
-            const { error } = await supabase.from('users').delete().eq('id', user.id);
-            if (error) throw error;
-            toast({ title: 'User Deleted', description: `User profile for ${user.name} has been removed. The Auth record still exists.`, variant: 'destructive' });
-            fetchUsers(); // Refresh the list
-        } catch (e: any) {
-             console.error("Error deleting user: ", e);
-             toast({ variant: 'destructive', title: 'Error', description: e.message || 'Failed to delete user profile.' });
-        }
-    };
+
+    // if (!isAuthChecked) { // Temporarily disabled
+    //     return <div>Loading...</div>
+    // }
 
     return (
         <Card>
             <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                     <CardTitle>User Management</CardTitle>
-                    <CardDescription>Manage user accounts and roles in the system.</CardDescription>
+                    <CardDescription>Create your first user to get started.</CardDescription>
                 </div>
-                <AddUserDialog onUserAdded={fetchUsers} />
             </CardHeader>
             <CardContent>
-                <UserList users={users} onUserUpdated={fetchUsers} onUserDeleted={handleUserDeleted} />
+                <div className="flex justify-center items-center h-64">
+                    <AddUserDialog onUserAdded={fetchUsers} />
+                </div>
             </CardContent>
         </Card>
     );
