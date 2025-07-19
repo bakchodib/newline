@@ -42,6 +42,7 @@ import type { Customer } from '@/app/dashboard/customers/page';
 import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { LoanApplication } from '@/app/dashboard/loans/applications/page';
+import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from '@/components/ui/table';
 
 
 const loanSchema = z.object({
@@ -379,5 +380,3 @@ export default function AllLoansPage() {
         </div>
     );
 }
-
-    
