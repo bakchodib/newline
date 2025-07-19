@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { AtSign, Lock, LogIn } from "lucide-react";
 
@@ -18,11 +19,10 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
 
-// Mock users data to simulate a database
-const mockUsers = {
+// Initial set of users, will be stored in localStorage
+const initialUsers = {
   "admin@jls.com": { password: "password", role: "admin", name: "Admin User" },
   "agent@jls.com": { password: "password", role: "agent", name: "Agent Smith" },
-  "customer@jls.com": { password: "password", role: "customer", name: "John Doe" },
 };
 
 export default function LoginPage() {
@@ -32,33 +32,45 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    // On first load, check if the user database exists in localStorage.
+    // If not, initialize it with the default admin/agent users.
+    if (!localStorage.getItem("jls_users_db")) {
+      localStorage.setItem("jls_users_db", JSON.stringify(initialUsers));
+    }
+  }, []);
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
         toast({
             variant: "destructive",
             title: "Validation Error",
-            description: "Email and password are required.",
+            description: "Email/ID and password are required.",
         });
         return;
     }
     setIsLoading(true);
 
     setTimeout(() => {
-      const user = mockUsers[email as keyof typeof mockUsers];
+      // Read the user database from localStorage
+      const usersDb = JSON.parse(localStorage.getItem("jls_users_db") || "{}");
+      const user = usersDb[email as keyof typeof usersDb];
+
       if (user && user.password === password) {
         toast({
           title: "Login Successful",
           description: `Welcome back, ${user.name}!`,
         });
         // Simulate session by storing user data in localStorage
+        // The email key is used to store the login ID (which can be an email or phone number)
         localStorage.setItem("jls_user", JSON.stringify({ email, ...user }));
         router.push("/dashboard");
       } else {
         toast({
           variant: "destructive",
           title: "Login Failed",
-          description: "Invalid email or password. Please try again.",
+          description: "Invalid credentials. Please try again.",
         });
         setIsLoading(false);
       }
@@ -76,19 +88,20 @@ export default function LoginPage() {
             Welcome Back
           </CardTitle>
           <CardDescription>
-            Log in to your JLS Finance account
+            Log in to your JLS Finance account.
+            Customers can log in with their registered phone number.
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">Email or Phone Number</Label>
               <div className="relative flex items-center">
                 <AtSign className="absolute left-3 h-5 w-5 text-muted-foreground" />
                 <Input
                   id="email"
-                  type="email"
-                  placeholder="admin@jls.com"
+                  type="text"
+                  placeholder="e.g., admin@jls.com or +919876543210"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}

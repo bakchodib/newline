@@ -59,7 +59,7 @@ const generateEmiSchedule = (loanId: string, amount: number, annualRate: number,
 };
 
 
-const DisburseLoanDialog = ({ loan, onDisbursed }: { loan: LoanApplication, onDisbursed: () => void }) => {
+const DisburseLoanDialog = ({ loan, customer, onDisbursed }: { loan: LoanApplication, customer: Customer, onDisbursed: () => void }) => {
     const [isOpen, setIsOpen] = useState(false);
     const { toast } = useToast();
     const { register, handleSubmit, control, formState: { errors, isSubmitting } } = useForm<DisbursalForm>({
@@ -87,6 +87,21 @@ const DisburseLoanDialog = ({ loan, onDisbursed }: { loan: LoanApplication, onDi
         // Add to all loans list
         const allLoans = JSON.parse(localStorage.getItem('jls_loans') || '[]');
         localStorage.setItem('jls_loans', JSON.stringify([...allLoans, finalLoan]));
+        
+        // --- Create Customer User Account ---
+        const allUsers = JSON.parse(localStorage.getItem('jls_users_db') || '{}');
+        // Use phone number as the unique login ID (email field)
+        const userEmail = customer.phone; 
+        if (!allUsers[userEmail]) {
+            allUsers[userEmail] = {
+                password: "CUST123",
+                role: "customer",
+                name: customer.name,
+            };
+            localStorage.setItem('jls_users_db', JSON.stringify(allUsers));
+            toast({ title: "Customer Account Created", description: `Login for ${customer.name} created. ID: ${userEmail}`});
+        }
+        // --- End ---
 
         // Remove from approved list
         const approvedLoans = JSON.parse(localStorage.getItem('jls_approved_loans') || '[]') as LoanApplication[];
@@ -179,8 +194,8 @@ export default function LoanDisbursalPage() {
        fetchApprovedLoans();
     }, []);
 
-    const findCustomerName = (customerId: string) => {
-        return customers.find(c => c.id === customerId)?.name || 'Unknown';
+    const findCustomer = (customerId: string) => {
+        return customers.find(c => c.id === customerId);
     };
 
     return (
@@ -209,10 +224,12 @@ export default function LoanDisbursalPage() {
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
-                                {approvedLoans.map((loan) => (
+                                {approvedLoans.map((loan) => {
+                                    const customer = findCustomer(loan.customerId);
+                                    return (
                                     <TableRow key={loan.id}>
                                         <TableCell className="font-medium">{loan.id}</TableCell>
-                                        <TableCell>{findCustomerName(loan.customerId)}</TableCell>
+                                        <TableCell>{customer?.name || 'Unknown'}</TableCell>
                                         <TableCell>Rs. {loan.amount.toLocaleString()}</TableCell>
                                         <TableCell>
                                             <span className="px-2 py-1 text-xs font-semibold rounded-full bg-green-200 text-green-800">
@@ -220,10 +237,10 @@ export default function LoanDisbursalPage() {
                                             </span>
                                         </TableCell>
                                         <TableCell className="text-right">
-                                            <DisburseLoanDialog loan={loan} onDisbursed={fetchApprovedLoans} />
+                                            {customer && <DisburseLoanDialog loan={loan} customer={customer} onDisbursed={fetchApprovedLoans} />}
                                         </TableCell>
                                     </TableRow>
-                                ))}
+                                )})}
                             </TableBody>
                         </Table>
                     </div>
