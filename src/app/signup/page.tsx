@@ -44,7 +44,7 @@ export default function SignupPage() {
     setIsLoading(true);
 
     try {
-      // 1. Create user in Firebase Auth
+      // 1. Create user in Firebase Auth. This also signs them in.
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
 
@@ -52,7 +52,7 @@ export default function SignupPage() {
       
       // 2. Create user profile in Firestore.
       // For a new public signup, we'll assign the 'agent' role by default
-      // so they can access the main dashboard features.
+      // so they can access the main dashboard features. 'admin' role must be set manually.
       const userProfile = {
         name: name,
         loginId: email,
@@ -65,7 +65,7 @@ export default function SignupPage() {
         title: "Account Created & Logged In",
         description: "Welcome! You have been automatically logged in.",
       });
-      // Instead of redirecting to login, we are already logged in, so go to the dashboard.
+      // Since user is already logged in, redirect straight to the dashboard.
       router.push("/dashboard");
 
     } catch (error: any) {
@@ -138,7 +138,7 @@ export default function SignupPage() {
                   placeholder="••••••••"
                   required
                   value={password}
-                  onChange={(e) => setPassword(e.g.target.value)}
+                  onChange={(e) => setPassword(e.target.value)}
                   className="pl-10"
                   disabled={isLoading}
                 />
