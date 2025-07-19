@@ -3,10 +3,11 @@
 
 import React, { useState, useEffect } from 'react';
 import { z } from 'zod';
-import { HandCoins } from 'lucide-react';
+import { HandCoins, Eye } from 'lucide-react';
 import { format } from 'date-fns';
 
 import { LoanDocuments } from "@/components/loan-documents";
+import { LoanDetailsView } from "@/components/loan-details-view";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import {
   Table,
@@ -57,7 +58,7 @@ const LoanList = ({ loans, customers }: { loans: (Loan & {id: string})[], custom
                         <TableHead>Interest</TableHead>
                         <TableHead>Tenure</TableHead>
                         <TableHead>Date</TableHead>
-                        <TableHead className="text-center">Documents</TableHead>
+                        <TableHead className="text-center">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -71,8 +72,13 @@ const LoanList = ({ loans, customers }: { loans: (Loan & {id: string})[], custom
                                 <TableCell>{loan.interestRate}%</TableCell>
                                 <TableCell>{loan.tenure} m</TableCell>
                                 <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
-                                <TableCell className="text-center space-x-1">
-                                    {customer && <LoanDocuments customer={customer} loan={loan} />}
+                                <TableCell className="text-center">
+                                    {customer && (
+                                        <div className="flex justify-center items-center gap-1">
+                                           <LoanDetailsView loan={loan} customer={customer} />
+                                           <LoanDocuments customer={customer} loan={loan} />
+                                        </div>
+                                    )}
                                 </TableCell>
                             </TableRow>
                         )

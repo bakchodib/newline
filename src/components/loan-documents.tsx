@@ -1,11 +1,11 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { Button } from './ui/button';
-import { FileText, CreditCard, Loader2 } from 'lucide-react';
+import { FileText, CreditCard, Loader2, Download } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import type { Customer } from '@/app/dashboard/customers/page';
@@ -15,12 +15,22 @@ interface jsPDFWithAutoTable extends jsPDF {
   autoTable: (options: any) => jsPDF;
 }
 
+export type Emi = {
+  id: string;
+  loanId: string;
+  installment: number;
+  dueDate: string;
+  amount: number;
+  status: 'paid' | 'unpaid';
+};
+
+
 interface LoanDocumentsProps {
     customer: Customer;
     loan: Loan & { id: string };
 }
 
-const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
+const generateEmiScheduleData = (amount: number, annualRate: number, tenureMonths: number, startDate: Date) => {
     const monthlyRate = annualRate / 12 / 100;
     const emi = (amount * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) / (Math.pow(1 + monthlyRate, tenureMonths) - 1);
     let balance = amount;
@@ -50,7 +60,17 @@ const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: n
 export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const { toast } = useToast();
     const [isGenerating, setIsGenerating] = useState(false);
+    const [allEmis, setAllEmis] = useState<Emi[]>([]);
     
+    useEffect(() => {
+        try {
+            const storedEmis = JSON.parse(localStorage.getItem('jls_emis') || '[]');
+            setAllEmis(storedEmis);
+        } catch (e) {
+            console.error("Failed to load EMIs from localStorage", e)
+        }
+    }, [])
+
     const customerPhoto = customer.photo || 'https://placehold.co/150x150.png';
 
 
@@ -84,7 +104,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         setIsGenerating(true);
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
-            const emiSchedule = generateEmiSchedule(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
+            const emiScheduleData = generateEmiScheduleData(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
             const netDisbursedAmount = loan.amount - (loan.processingFee || 0);
 
             // Header
@@ -131,10 +151,26 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             // EMI Schedule Table
             doc.setFont('helvetica', 'bold');
             doc.text("EMI Schedule", 20, 152);
+
+            const tableHeaders = ['Month', 'Due Date', 'EMI (Rs.)', 'Principal', 'Interest', 'Balance'];
+            if(type === 'card'){
+                tableHeaders.push('Status');
+            }
+
+            const loanEmisForLoan = allEmis.filter(e => e.loanId === loan.id);
+            const tableBody = emiScheduleData.map(emi => {
+                 const emiData = [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance];
+                 if (type === 'card') {
+                    const emiRecord = loanEmisForLoan.find(e => e.installment === emi.month);
+                    emiData.push(emiRecord ? emiRecord.status.charAt(0).toUpperCase() + emiRecord.status.slice(1) : 'Unpaid');
+                 }
+                 return emiData;
+            });
+
             doc.autoTable({
                 startY: 157,
-                head: [['Month', 'Due Date', 'EMI Amount (Rs.)', 'Principal', 'Interest', 'Balance']],
-                body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance]),
+                head: [tableHeaders],
+                body: tableBody,
                 theme: 'grid',
                 headStyles: { fillColor: [34, 139, 34] },
             });
@@ -178,7 +214,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             
             addWatermark(doc);
 
-            doc.save(`${type}_${customer.id}.pdf`);
+            doc.save(`${type}_${customer.id}_${loan.id}.pdf`);
             
             toast({
                 title: "PDF Generated",
@@ -223,3 +259,59 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         </TooltipProvider>
     );
 }
+
+export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, customer: Customer) => {
+    try {
+        const doc = new jsPDF() as jsPDFWithAutoTable;
+
+        // Header
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(20);
+        doc.text("JLS FINANCE LTD", doc.internal.pageSize.getWidth() / 2, 20, { align: 'center' });
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'normal');
+        doc.text("EMI Payment Receipt", doc.internal.pageSize.getWidth() / 2, 28, { align: 'center' });
+        doc.setLineWidth(0.5);
+        doc.line(20, 32, doc.internal.pageSize.getWidth() - 20, 32);
+
+        // Receipt Details
+        doc.setFontSize(12);
+        const receiptDate = new Date().toLocaleDateString();
+        doc.text(`Date: ${receiptDate}`, 150, 42);
+        doc.text(`Receipt No: ${emi.id}`, 20, 42);
+        
+        doc.setFont('helvetica', 'bold');
+        doc.text("Payment Details", 20, 55);
+        doc.setFont('helvetica', 'normal');
+        
+        const data = [
+            ['Received From:', customer.name],
+            ['Customer ID:', customer.id!],
+            ['Loan ID:', loan.id],
+            ['Payment For:', `Installment No. ${emi.installment}`],
+            ['Amount Paid:', `Rs. ${emi.amount.toLocaleString()}`],
+            ['Due Date:', new Date(emi.dueDate).toLocaleDateString()],
+            ['Payment Status:', 'Paid'],
+        ];
+
+        doc.autoTable({
+            startY: 60,
+            body: data,
+            theme: 'plain',
+            styles: { fontSize: 11, cellPadding: 2 },
+            columnStyles: { 0: { fontStyle: 'bold' } }
+        });
+
+        const finalY = (doc as any).lastAutoTable.finalY + 20;
+
+        doc.setFontSize(10);
+        doc.text("This is a computer-generated receipt and does not require a signature.", doc.internal.pageSize.getWidth() / 2, finalY, { align: 'center' });
+
+        doc.save(`Receipt_${emi.id}.pdf`);
+        return true;
+    } catch (error) {
+        console.error("Receipt Generation Error:", error);
+        return false;
+    }
+};
+
