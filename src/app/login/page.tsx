@@ -24,8 +24,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 export default function LoginPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("admin@jls.com");
+  const [password, setPassword] = useState("password");
   const [isLoading, setIsLoading] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -57,6 +57,7 @@ export default function LoginPage() {
             .single();
           
           if(profileError) throw new Error("Could not find user profile. Please contact admin.");
+          if(!userProfile) throw new Error("User profile not found.");
 
           toast({
             title: "Login Successful",
@@ -155,7 +156,7 @@ export default function LoginPage() {
               <Info className="h-4 w-4" />
               <AlertTitle>First-time user?</AlertTitle>
               <AlertDescription>
-                Please contact an administrator to have an account created for you.
+                Contact an admin or use the User Management page to create an account.
               </AlertDescription>
             </Alert>
           </CardFooter>
