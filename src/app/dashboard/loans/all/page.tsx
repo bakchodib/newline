@@ -543,7 +543,7 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                 <TableCell>{loan.tenure} m</TableCell>
                                 <TableCell>{format(new Date(loan.disbursalDate), "PP")}</TableCell>
                                 <TableCell>
-                                    <Badge variant={loan.status === 'closed' ? 'destructive' : 'default'}>
+                                    <Badge variant={loan.status === 'closed' ? 'destructive' : 'default'} className={cn(loan.status === 'active' && 'bg-green-600')}>
                                         {loan.status ? loan.status.charAt(0).toUpperCase() + loan.status.slice(1) : 'Active'}
                                     </Badge>
                                 </TableCell>
@@ -631,3 +631,5 @@ export default function AllLoansPage() {
         </div>
     );
 }
+
+    
