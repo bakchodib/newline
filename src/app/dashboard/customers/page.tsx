@@ -10,6 +10,7 @@ import Image from 'next/image';
 import { collection, getDocs, addDoc, doc, updateDoc, deleteDoc, writeBatch, query, where } from 'firebase/firestore';
 
 import { db, auth } from '@/lib/firebase';
+import { useAuth } from '@/hooks/useAuth';
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
 import {
@@ -602,6 +603,7 @@ export default function CustomersPage() {
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const { toast } = useToast();
+    const { isAuthChecked } = useAuth();
 
     const fetchCustomers = useCallback(async () => {
         setIsLoading(true);
@@ -619,8 +621,10 @@ export default function CustomersPage() {
     }, [toast]);
 
     useEffect(() => {
-        fetchCustomers();
-    }, [fetchCustomers]);
+        if (isAuthChecked) {
+            fetchCustomers();
+        }
+    }, [isAuthChecked, fetchCustomers]);
     
     const handleDeleteCustomer = async (id: string) => {
         try {

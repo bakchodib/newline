@@ -13,6 +13,7 @@ type User = {
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isAuthChecked, setIsAuthChecked] = useState(false); // New state
   const router = useRouter();
   const pathname = usePathname();
 
@@ -32,6 +33,7 @@ export function useAuth() {
        }
     } finally {
       setLoading(false);
+      setIsAuthChecked(true); // Mark auth check as complete
     }
   }, [router, pathname]);
 
@@ -41,5 +43,5 @@ export function useAuth() {
     router.push('/login');
   };
 
-  return { user, logout, loading };
+  return { user, logout, loading, isAuthChecked };
 }
