@@ -5,7 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X } from 'lucide-react';
+import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X, Loader2 } from 'lucide-react';
 import Image from 'next/image';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
@@ -77,6 +77,7 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
   const [isOpen, setIsOpen] = useState(false);
   const [isGuarantorOpen, setIsGuarantorOpen] = useState(false);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   const form = useForm<Customer>({
     resolver: zodResolver(customerSchema),
@@ -92,16 +93,45 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
   
   const { control, handleSubmit, register, reset, setValue, formState: { errors, isSubmitting } } = form;
 
-  const handlePhotoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handlePhotoChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = reader.result as string;
-        setValue('photo', base64String);
-        setPhotoPreview(base64String);
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('image', file);
+    
+    // NOTE: It's generally recommended to store API keys in environment variables
+    // on the server-side for security, but for this client-side PWA example,
+    // we'll use it directly. Be mindful of this in a production application.
+    const IMGUR_API_KEY = "881d667e66f0b22ff45ba16e248fbcb2";
+    
+    try {
+        const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGUR_API_KEY}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+        
+        if (result.success && result.data.url) {
+            const imageUrl = result.data.url;
+            setValue('photo', imageUrl);
+            setPhotoPreview(imageUrl);
+            toast({ title: "Photo Uploaded", description: "The customer photo was uploaded successfully." });
+        } else {
+            throw new Error(result.error?.message || 'Failed to upload image.');
+        }
+    } catch (error) {
+        console.error("ImgBB Upload Error:", error);
+        toast({
+            variant: "destructive",
+            title: "Upload Failed",
+            description: "Could not upload the photo. Please try again.",
+        });
+        clearPhoto();
+    } finally {
+        setIsUploading(false);
     }
   };
   
@@ -164,19 +194,21 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
                             <div className="w-40 h-40 rounded-full border-2 border-dashed flex items-center justify-center bg-muted overflow-hidden">
                               {photoPreview ? (
                                 <Image src={photoPreview} alt="Preview" width={160} height={160} className="object-cover w-full h-full" />
+                              ) : isUploading ? (
+                                <Loader2 className="w-12 h-12 text-muted-foreground animate-spin" />
                               ) : (
                                 <User className="w-20 h-20 text-muted-foreground" />
                               )}
                             </div>
                              <div className="flex gap-2">
-                                <Button type="button" size="sm" variant="outline" asChild>
+                                <Button type="button" size="sm" variant="outline" asChild disabled={isUploading}>
                                   <label htmlFor="photo-upload" className="cursor-pointer">
                                     <Upload className="mr-2 h-4 w-4" /> Upload
                                   </label>
                                 </Button>
-                                <Input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+                                <Input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} disabled={isUploading} />
                                 {photoPreview && (
-                                    <Button type="button" size="sm" variant="destructive" onClick={clearPhoto}>
+                                    <Button type="button" size="sm" variant="destructive" onClick={clearPhoto} disabled={isUploading}>
                                         <X className="mr-2 h-4 w-4" /> Remove
                                     </Button>
                                 )}
@@ -255,7 +287,7 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
               </Collapsible>
             </div>
             <DialogFooter className="mt-4">
-              <Button type="submit" disabled={isSubmitting}>
+              <Button type="submit" disabled={isSubmitting || isUploading}>
                 {isSubmitting ? 'Saving...' : 'Save Customer'}
               </Button>
             </DialogFooter>
@@ -380,3 +412,5 @@ export default function CustomersPage() {
         </Card>
     );
 }
+
+    
