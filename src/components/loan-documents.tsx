@@ -166,15 +166,18 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             if(type === 'agreement'){
                 doc.addPage();
                 finalY = 20; // Reset Y position for new page
-                doc.setFontSize(12);
-                doc.setFont('helvetica', 'bold');
-                doc.text("Guarantor Details", 20, finalY);
-                doc.setFont('helvetica', 'normal');
-                doc.text(`Name: ${customer.guarantor.name}`, 20, finalY + 8);
-                doc.text(`Phone: ${customer.guarantor.phone}`, 20, finalY + 14);
-                doc.text(`Address: ${customer.guarantor.address}`, 20, finalY + 20);
+                
+                if (customer.guarantor && customer.guarantor.name) {
+                    doc.setFontSize(12);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text("Guarantor Details", 20, finalY);
+                    doc.setFont('helvetica', 'normal');
+                    doc.text(`Name: ${customer.guarantor.name}`, 20, finalY + 8);
+                    doc.text(`Phone: ${customer.guarantor.phone}`, 20, finalY + 14);
+                    doc.text(`Address: ${customer.guarantor.address}`, 20, finalY + 20);
+                    finalY += 40;
+                }
 
-                finalY += 40;
                 doc.setFontSize(10);
                 doc.setFont('helvetica', 'bold');
                 doc.text("Terms and Conditions:", 20, finalY);
