@@ -104,8 +104,6 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
         setIsGenerating(true);
         try {
             const doc = new jsPDF() as jsPDFWithAutoTable;
-            const originalDisbursalDate = loan.topupHistory && loan.topupHistory.length > 0 ? loan.disbursalDate : loan.disbursalDate;
-            const originalLoanAmount = loan.topupHistory && loan.topupHistory.length > 0 ? loan.topupHistory[0].previousOutstanding : loan.amount;
             
             const emiScheduleData = generateEmiScheduleData(loan.amount, loan.interestRate, loan.tenure, new Date(loan.disbursalDate));
             const netDisbursedAmount = loan.amount - (loan.processingFee || 0);
@@ -138,39 +136,30 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.text(`Address: ${customer.address}`, 20, 68, { maxWidth: 120 });
             
             // Loan Details Section
+            let finalY = 95;
             doc.setFont('helvetica', 'bold');
-            doc.text("Loan Details", 20, 95);
+            doc.text("Loan Details", 20, finalY);
+            finalY += 8;
             doc.setFont('helvetica', 'normal');
-            doc.text(`Loan ID: ${loan.id}`, 20, 103);
-            doc.text(`Sanctioned Amount: Rs. ${originalLoanAmount.toLocaleString()}`, 20, 109);
-            doc.text(`Processing Fee (5%): Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 20, 115);
+            doc.text(`Loan ID: ${loan.id}`, 20, finalY);
+            finalY += 6;
+            doc.text(`Sanctioned Amount: Rs. ${loan.amount.toLocaleString()}`, 20, finalY);
+            finalY += 6;
+            doc.text(`Processing Fee: Rs. ${loan.processingFee?.toLocaleString() || 'N/A'}`, 20, finalY);
+            finalY += 6;
             doc.setFont('helvetica', 'bold');
-            doc.text(`Net Disbursed Amount: Rs. ${netDisbursedAmount.toLocaleString()}`, 20, 121);
+            doc.text(`Net Disbursed Amount: Rs. ${netDisbursedAmount.toLocaleString()}`, 20, finalY);
+            finalY += 6;
             doc.setFont('helvetica', 'normal');
-            doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, 127);
-            doc.text(`Tenure: ${loan.tenure} months`, 20, 133);
-            doc.text(`Disbursal Date: ${new Date(originalDisbursalDate).toLocaleDateString()}`, 20, 139);
+            doc.text(`Interest Rate: ${loan.interestRate}% p.a.`, 20, finalY);
+            finalY += 6;
+            doc.text(`Tenure: ${loan.tenure} months`, 20, finalY);
+            finalY += 6;
+            doc.text(`Disbursal Date: ${new Date(loan.disbursalDate).toLocaleDateString()}`, 20, finalY);
             
-            let finalY = 145;
-
-            // Top-up History Section
-            if (loan.topupHistory && loan.topupHistory.length > 0) {
-                doc.setLineWidth(0.2);
-                doc.line(20, finalY, doc.internal.pageSize.getWidth() - 20, finalY);
-                finalY += 10;
-                doc.setFont('helvetica', 'bold');
-                doc.text("Top-up History", 20, finalY);
-                finalY += 8;
-                loan.topupHistory.forEach((topup, index) => {
-                    doc.setFont('helvetica', 'normal');
-                    doc.text(`- On ${new Date(topup.topUpDate).toLocaleDateString()}, topped up Rs. ${topup.topUpAmount.toLocaleString()}. New tenure: ${topup.newTenure} months.`, 20, finalY);
-                    finalY += 6;
-                });
-            }
-
+            finalY += 10;
 
             // EMI Schedule Table
-            finalY += 10;
             doc.setFont('helvetica', 'bold');
             doc.text("EMI Schedule", 20, finalY);
             finalY += 5;
@@ -338,5 +327,6 @@ export const generateEmiReceipt = (emi: Emi, loan: Loan & { id: string }, custom
         return false;
     }
 };
+
 
 
