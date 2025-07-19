@@ -27,12 +27,12 @@ const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: n
     const schedule = [];
 
     for (let i = 1; i <= tenureMonths; i++) {
+        const dueDate = new Date(startDate);
+        dueDate.setMonth(startDate.getMonth() + i);
+
         const interest = balance * monthlyRate;
         const principal = emi - interest;
         balance -= principal;
-
-        const dueDate = new Date(startDate);
-        dueDate.setMonth(startDate.getMonth() + i);
 
         schedule.push({
             month: i,
@@ -93,9 +93,11 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.setTextColor(220, 220, 220);
             doc.setFontSize(50);
             doc.saveGraphicsState();
-            doc.translate(doc.internal.pageSize.getWidth() / 2, doc.internal.pageSize.getHeight() / 2);
-            doc.rotate(-45);
-            doc.text("JLS FINANCE LTD", 0, 0, { align: 'center' });
+            doc.setGState(new (doc as any).GState({opacity: 0.5}));
+            doc.text("JLS FINANCE LTD", doc.internal.pageSize.getWidth() / 2, doc.internal.pageSize.getHeight() / 2, { 
+                align: 'center', 
+                angle: -45 
+            });
             doc.restoreGraphicsState();
         }
     };
@@ -158,7 +160,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
                 head: [['Month', 'Due Date', 'EMI Amount (Rs.)', 'Principal', 'Interest', 'Balance']],
                 body: emiSchedule.map(emi => [emi.month, emi.dueDate, emi.amount, emi.principal, emi.interest, emi.balance]),
                 theme: 'grid',
-                headStyles: { fillColor: [22, 163, 74] },
+                headStyles: { fillColor: [34, 139, 34] }, // A pleasant green color
             });
             
             let finalY = (doc as any).lastAutoTable.finalY || 180;
