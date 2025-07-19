@@ -91,13 +91,14 @@ const LoanTopUpDialog = ({ loan, customer, onLoanUpdated }: { loan: Loan & {id: 
         
         toast({ title: "Top-up Application Submitted", description: `A new loan application for ${customer.name} has been created.` });
         setIsOpen(false);
+        setAmount(0); // Reset amount
         onLoanUpdated();
     };
 
     return (
         <Dialog open={isOpen} onOpenChange={setIsOpen}>
             <DialogTrigger asChild>
-                <Button variant="ghost" size="icon">
+                 <Button variant="ghost" size="icon">
                     <PlusCircle className="h-4 w-4 text-green-600" />
                 </Button>
             </DialogTrigger>
@@ -143,7 +144,7 @@ const EarlyCloseDialog = ({ loan, onLoanUpdated }: { loan: Loan & {id: string}, 
 
         localStorage.setItem('jls_emis', JSON.stringify(updatedEmis));
         toast({ title: "Loan Closed", description: `Loan ${loan.id} has been marked as early closed.` });
-        onLoanUpdated();
+        onLoanUpdated(); // This will re-render the calling component
     };
 
     return (
@@ -314,19 +315,27 @@ const LoanList = ({ loans, customers, onLoanUpdated }: { loans: (Loan & {id: str
                                         <TooltipProvider>
                                             <div className="flex justify-center items-center gap-1">
                                                <Tooltip>
-                                                   <TooltipTrigger asChild><LoanDetailsView loan={loan} customer={customer} /></TooltipTrigger>
+                                                   <TooltipTrigger asChild>
+                                                       <LoanDetailsView loan={loan} customer={customer} />
+                                                   </TooltipTrigger>
                                                    <TooltipContent><p>View Details</p></TooltipContent>
                                                </Tooltip>
                                                <Tooltip>
-                                                    <TooltipTrigger asChild><EditLoanDialog loan={loan} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipTrigger asChild>
+                                                        <EditLoanDialog loan={loan} onLoanUpdated={onLoanUpdated} />
+                                                    </TooltipTrigger>
                                                     <TooltipContent><p>Edit Loan</p></TooltipContent>
                                                </Tooltip>
                                                <Tooltip>
-                                                    <TooltipTrigger asChild><LoanTopUpDialog loan={loan} customer={customer} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipTrigger asChild>
+                                                        <LoanTopUpDialog loan={loan} customer={customer} onLoanUpdated={onLoanUpdated} />
+                                                    </TooltipTrigger>
                                                     <TooltipContent><p>Loan Top-up</p></TooltipContent>
                                                </Tooltip>
                                                <Tooltip>
-                                                    <TooltipTrigger asChild><EarlyCloseDialog loan={loan} onLoanUpdated={onLoanUpdated} /></TooltipTrigger>
+                                                    <TooltipTrigger asChild>
+                                                        <EarlyCloseDialog loan={loan} onLoanUpdated={onLoanUpdated} />
+                                                    </TooltipTrigger>
                                                     <TooltipContent><p>Early Close</p></TooltipContent>
                                                </Tooltip>
                                                <LoanDocuments customer={customer} loan={loan} />
