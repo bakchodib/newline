@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { AtSign, Lock, LogIn } from "lucide-react";
+import { AtSign, Lock, LogIn, Info } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Logo } from "@/components/icons/logo";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -100,11 +101,18 @@ export default function LoginPage() {
             Welcome Back
           </CardTitle>
           <CardDescription>
-            Log in to your JLS Finance account. Customers can log in with their registered phone number.
+            Log in to your JLS Finance account.
           </CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
+             <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>Demo Credentials</AlertTitle>
+              <AlertDescription>
+                Use <strong>admin@jls.com</strong> and password <strong>admin123</strong> to log in.
+              </AlertDescription>
+            </Alert>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <div className="relative flex items-center">
