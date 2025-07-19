@@ -2,10 +2,11 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, User, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { PlusCircle, User, Trash2, ChevronDown, ChevronUp, Upload, X } from 'lucide-react';
+import Image from 'next/image';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from '@/components/ui/button';
@@ -41,11 +42,20 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from "@/components/ui/form";
+
 
 // Define the schema for a customer
 const customerSchema = z.object({
   id: z.string().optional(),
+  photo: z.string().optional(),
   name: z.string().min(3, "Name must be at least 3 characters long."),
   phone: z.string().regex(/^\+?[1-9]\d{1,14}$/, "Please enter a valid phone number."),
   address: z.string().min(5, "Address is too short."),
@@ -66,9 +76,39 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
   const { toast } = useToast();
   const [isOpen, setIsOpen] = useState(false);
   const [isGuarantorOpen, setIsGuarantorOpen] = useState(false);
-  const { register, handleSubmit, control, reset, formState: { errors, isSubmitting } } = useForm<Customer>({
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  const form = useForm<Customer>({
     resolver: zodResolver(customerSchema),
+    defaultValues: {
+      name: "",
+      phone: "",
+      address: "",
+      photo: "",
+      kyc: { idType: "", idNumber: "" },
+      guarantor: { name: "", phone: "", address: "" }
+    }
   });
+  
+  const { control, handleSubmit, register, reset, setValue, formState: { errors, isSubmitting } } = form;
+
+  const handlePhotoChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setValue('photo', base64String);
+        setPhotoPreview(base64String);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+  
+  const clearPhoto = () => {
+      setValue('photo', '');
+      setPhotoPreview(null);
+  }
 
   const onSubmit = (data: Customer) => {
     const newCustomer: Customer = {
@@ -83,94 +123,144 @@ const CustomerRegistrationForm = ({ onCustomerAdded }: { onCustomerAdded: (custo
     onCustomerAdded(newCustomer);
     toast({ title: "Success", description: "Customer registered successfully." });
     reset();
+    setPhotoPreview(null);
     setIsOpen(false);
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
+    <Dialog open={isOpen} onOpenChange={(open) => {
+        if (!open) {
+            reset();
+            setPhotoPreview(null);
+        }
+        setIsOpen(open);
+    }}>
       <DialogTrigger asChild>
         <Button>
           <PlusCircle className="mr-2 h-4 w-4" />
           Register Customer
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Register New Customer</DialogTitle>
           <DialogDescription>
             Fill in the details below to add a new customer to the system.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto px-2">
-            
-            <h4 className="font-semibold text-primary">Personal Details</h4>
-            <div className="space-y-2">
-              <Label htmlFor="name">Full Name</Label>
-              <Input id="name" {...register('name')} />
-              {errors.name && <p className="text-destructive text-sm mt-1">{errors.name.message}</p>}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" {...register('phone')} />
-              {errors.phone && <p className="text-destructive text-sm mt-1">{errors.phone.message}</p>}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="address">Address</Label>
-              <Input id="address" {...register('address')} />
-              {errors.address && <p className="text-destructive text-sm mt-1">{errors.address.message}</p>}
-            </div>
+        <Form {...form}>
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <div className="space-y-4 py-4 max-h-[70vh] overflow-y-auto px-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 space-y-4">
+                  <h4 className="font-semibold text-primary">Customer Photo</h4>
+                   <FormField
+                    control={control}
+                    name="photo"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormControl>
+                          <div className="flex flex-col items-center gap-4">
+                            <div className="w-40 h-40 rounded-full border-2 border-dashed flex items-center justify-center bg-muted overflow-hidden">
+                              {photoPreview ? (
+                                <Image src={photoPreview} alt="Preview" width={160} height={160} className="object-cover w-full h-full" />
+                              ) : (
+                                <User className="w-20 h-20 text-muted-foreground" />
+                              )}
+                            </div>
+                             <div className="flex gap-2">
+                                <Button type="button" size="sm" variant="outline" asChild>
+                                  <label htmlFor="photo-upload" className="cursor-pointer">
+                                    <Upload className="mr-2 h-4 w-4" /> Upload
+                                  </label>
+                                </Button>
+                                <Input id="photo-upload" type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+                                {photoPreview && (
+                                    <Button type="button" size="sm" variant="destructive" onClick={clearPhoto}>
+                                        <X className="mr-2 h-4 w-4" /> Remove
+                                    </Button>
+                                )}
+                            </div>
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <div className="md:col-span-2 space-y-4">
+                  <h4 className="font-semibold text-primary">Personal Details</h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Full Name</Label>
+                    <Input id="name" {...register('name')} />
+                    {errors.name && <p className="text-destructive text-sm mt-1">{errors.name.message}</p>}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Phone Number</Label>
+                      <Input id="phone" {...register('phone')} />
+                      {errors.phone && <p className="text-destructive text-sm mt-1">{errors.phone.message}</p>}
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="address">Address</Label>
+                    <Input id="address" {...register('address')} />
+                    {errors.address && <p className="text-destructive text-sm mt-1">{errors.address.message}</p>}
+                  </div>
 
-            <h4 className="font-semibold text-primary pt-4">KYC Details</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                  <Label htmlFor="kyc.idType">ID Type</Label>
-                   <select {...register('kyc.idType')} className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
-                        <option value="">Select ID Type</option>
-                        <option value="Aadhar Card">Aadhar Card</option>
-                        <option value="Voter ID">Voter ID</option>
-                        <option value="PAN Card">PAN Card</option>
-                        <option value="Passport">Passport</option>
-                    </select>
-                  {errors.kyc?.idType && <p className="text-destructive text-sm mt-1">{errors.kyc.idType.message}</p>}
+                  <h4 className="font-semibold text-primary pt-4">KYC Details</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="kyc.idType">ID Type</Label>
+                         <select {...register('kyc.idType')} className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50">
+                              <option value="">Select ID Type</option>
+                              <option value="Aadhar Card">Aadhar Card</option>
+                              <option value="Voter ID">Voter ID</option>
+                              <option value="PAN Card">PAN Card</option>
+                              <option value="Passport">Passport</option>
+                          </select>
+                        {errors.kyc?.idType && <p className="text-destructive text-sm mt-1">{errors.kyc.idType.message}</p>}
+                    </div>
+                     <div className="space-y-2">
+                        <Label htmlFor="kyc.idNumber">ID Number</Label>
+                        <Input id="kyc.idNumber" {...register('kyc.idNumber')} />
+                        {errors.kyc?.idNumber && <p className="text-destructive text-sm mt-1">{errors.kyc.idNumber.message}</p>}
+                     </div>
+                  </div>
+                </div>
               </div>
-               <div className="space-y-2">
-                  <Label htmlFor="kyc.idNumber">ID Number</Label>
-                  <Input id="kyc.idNumber" {...register('kyc.idNumber')} />
-                  {errors.kyc?.idNumber && <p className="text-destructive text-sm mt-1">{errors.kyc.idNumber.message}</p>}
-               </div>
-            </div>
 
-            <Collapsible open={isGuarantorOpen} onOpenChange={setIsGuarantorOpen} className="space-y-2 pt-4">
-              <CollapsibleTrigger className="flex w-full items-center justify-between font-semibold text-primary">
-                Guarantor Details
-                {isGuarantorOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="space-y-4 pt-2">
-                 <div className="space-y-2">
-                    <Label htmlFor="guarantor.name">Guarantor Name</Label>
-                    <Input id="guarantor.name" {...register('guarantor.name')} />
-                    {errors.guarantor?.name && <p className="text-destructive text-sm mt-1">{errors.guarantor.name.message}</p>}
-                 </div>
-                 <div className="space-y-2">
-                    <Label htmlFor="guarantor.phone">Guarantor Phone</Label>
-                    <Input id="guarantor.phone" {...register('guarantor.phone')} />
-                    {errors.guarantor?.phone && <p className="text-destructive text-sm mt-1">{errors.guarantor.phone.message}</p>}
-                 </div>
-                 <div className="space-y-2">
-                    <Label htmlFor="guarantor.address">Guarantor Address</Label>
-                    <Input id="guarantor.address" {...register('guarantor.address')} />
-                    {errors.guarantor?.address && <p className="text-destructive text-sm mt-1">{errors.guarantor.address.message}</p>}
-                 </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </div>
-          <DialogFooter className="mt-4">
-            <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Saving...' : 'Save Customer'}
-            </Button>
-          </DialogFooter>
-        </form>
+              <Collapsible open={isGuarantorOpen} onOpenChange={setIsGuarantorOpen} className="space-y-2 pt-4">
+                <CollapsibleTrigger className="flex w-full items-center justify-between font-semibold text-primary text-lg border-t pt-4">
+                  Guarantor Details (Optional)
+                  {isGuarantorOpen ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-4 pt-2">
+                   <div className="space-y-2">
+                      <Label htmlFor="guarantor.name">Guarantor Name</Label>
+                      <Input id="guarantor.name" {...register('guarantor.name')} />
+                      {errors.guarantor?.name && <p className="text-destructive text-sm mt-1">{errors.guarantor.name.message}</p>}
+                   </div>
+                   <div className="space-y-2">
+                      <Label htmlFor="guarantor.phone">Guarantor Phone</Label>
+                      <Input id="guarantor.phone" {...register('guarantor.phone')} />
+                      {errors.guarantor?.phone && <p className="text-destructive text-sm mt-1">{errors.guarantor.phone.message}</p>}
+                   </div>
+                   <div className="space-y-2">
+                      <Label htmlFor="guarantor.address">Guarantor Address</Label>
+                      <Input id="guarantor.address" {...register('guarantor.address')} />
+                      {errors.guarantor?.address && <p className="text-destructive text-sm mt-1">{errors.guarantor.address.message}</p>}
+                   </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Saving...' : 'Save Customer'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </Form>
       </DialogContent>
     </Dialog>
   );

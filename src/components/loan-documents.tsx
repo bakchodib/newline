@@ -50,40 +50,11 @@ const generateEmiSchedule = (amount: number, annualRate: number, tenureMonths: n
 export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     const { toast } = useToast();
     const [isGenerating, setIsGenerating] = useState(false);
-    const [customerPhoto, setCustomerPhoto] = useState<string | null>(null);
+    
+    // The customer photo is now passed directly via props.
+    // A placeholder is used if the customer has no photo.
+    const customerPhoto = customer.photo || 'https://placehold.co/150x150.png';
 
-    // Using a placeholder photo for now.
-    const photoUrl = 'https://placehold.co/150x150.png';
-
-    useEffect(() => {
-        // Fetch and cache the placeholder photo in base64
-        const cachePhoto = async () => {
-             try {
-                let photo = localStorage.getItem('placeholder_photo');
-                if (!photo) {
-                    const response = await fetch(photoUrl);
-                    const blob = await response.blob();
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                        const base64data = reader.result as string;
-                        localStorage.setItem('placeholder_photo', base64data);
-                        setCustomerPhoto(base64data);
-                    };
-                    reader.readAsDataURL(blob);
-                } else {
-                    setCustomerPhoto(photo);
-                }
-            } catch (error) {
-                console.error("Could not process customer photo:", error);
-                toast({
-                    variant: "destructive",
-                    title: "Photo Error",
-                    description: "Failed to load customer photo for PDF generation."
-                });
-            }
-        };
-       cachePhoto();
-    }, [toast]);
 
     const addWatermark = (doc: jsPDF) => {
         const pageCount = (doc as any).internal.getNumberOfPages();
@@ -103,11 +74,11 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
     };
 
     const generatePdf = (type: 'agreement' | 'card') => {
-        if (!customerPhoto) {
+        if (!customer) {
             toast({
                 variant: "destructive",
                 title: "Cannot Generate PDF",
-                description: "Customer photo is not available yet. Please try again shortly."
+                description: "Customer data is not available."
             });
             return;
         }
@@ -132,8 +103,12 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             doc.setFont('helvetica', 'bold');
             doc.text("Customer Details", 20, 42);
 
-            if (customerPhoto) {
+            try {
+              // customerPhoto can be a data URI or a URL. jsPDF handles both.
               doc.addImage(customerPhoto, 'PNG', 150, 45, 40, 40);
+            } catch (e) {
+              console.error("Error adding image to PDF:", e);
+              // Continue without the image if it fails
             }
             
             doc.setFont('helvetica', 'normal');
@@ -227,7 +202,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
             <div className="flex gap-1">
                 <Tooltip>
                     <TooltipTrigger asChild>
-                        <Button onClick={() => generatePdf('agreement')} disabled={isGenerating || !customerPhoto} variant="ghost" size="icon">
+                        <Button onClick={() => generatePdf('agreement')} disabled={isGenerating} variant="ghost" size="icon">
                             {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileText className="h-4 w-4" />}
                         </Button>
                     </TooltipTrigger>
@@ -237,7 +212,7 @@ export function LoanDocuments({ customer, loan }: LoanDocumentsProps) {
                 </Tooltip>
                  <Tooltip>
                     <TooltipTrigger asChild>
-                       <Button onClick={() => generatePdf('card')} disabled={isGenerating || !customerPhoto} variant="ghost" size="icon">
+                       <Button onClick={() => generatePdf('card')} disabled={isGenerating} variant="ghost" size="icon">
                             {isGenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
                         </Button>
                     </TooltipTrigger>
