@@ -5,7 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { PlusCircle, Trash2 } from 'lucide-react';
+import { PlusCircle, Trash2, Info } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
@@ -48,12 +48,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-// import { useAuth } from '@/hooks/useAuth';
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
 
+// Schema without password
 const userSchema = z.object({
   name: z.string().min(3, "Name is required."),
   loginId: z.string().email("Please enter a valid email address for the Login ID."),
-  password: z.string().min(6, "Password must be at least 6 characters."),
   role: z.enum(['admin', 'agent', 'customer']),
 });
 
@@ -71,40 +71,29 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 
   const onSubmit = async (data: z.infer<typeof userSchema>) => {
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: data.loginId,
-        password: data.password,
-        options: {
-          data: {
-            name: data.name,
-            role: data.role
-          }
-        }
-      });
-
-      if (authError) throw authError;
-      if (!authData.user) throw new Error("Supabase Auth user creation failed.");
-      
-      const supabaseUser = authData.user;
-
-      const { error: dbError } = await supabase
+      // Step 1: Just add the user to the public `users` table.
+      // We are skipping Supabase Auth user creation from the client.
+      const { error } = await supabase
         .from('users')
         .insert({
           name: data.name,
           loginId: data.loginId,
           role: data.role,
-          authUid: supabaseUser.id
+          // authUid will be null for now, this is okay.
         });
 
-      if (dbError) throw dbError;
+      if (error) throw error;
 
-      toast({ title: "User Added", description: `User ${data.name} has been created.` });
+      toast({ 
+        title: "User Profile Created", 
+        description: `Profile for ${data.name} added. Now, add them as an auth user in the Supabase dashboard.` 
+      });
       onUserAdded();
       reset();
       setIsOpen(false);
     } catch (e: any) {
-      console.error("Error adding user:", e);
-      toast({ variant: 'destructive', title: "Registration Failed", description: e.message });
+      console.error("Error adding user profile:", e);
+      toast({ variant: 'destructive', title: "Profile Creation Failed", description: e.message });
     }
   };
 
@@ -118,8 +107,10 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create New User</DialogTitle>
-          <DialogDescription>Create an account for a new staff member or administrator.</DialogDescription>
+          <DialogTitle>Create New User Profile</DialogTitle>
+          <DialogDescription>
+            This will add a user to the system. You must then add them as an authentication user in your Supabase dashboard.
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
@@ -131,11 +122,6 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
             <Label htmlFor="loginId">Login ID (Email)</Label>
             <Input id="loginId" {...register('loginId')} type="email" />
             {errors.loginId && <p className="text-destructive text-sm mt-1">{errors.loginId.message}</p>}
-          </div>
-          <div>
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" {...register('password')} />
-            {errors.password && <p className="text-destructive text-sm mt-1">{errors.password.message}</p>}
           </div>
           <div>
             <Label htmlFor="role">Role</Label>
@@ -151,7 +137,7 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
                         <SelectContent>
                             <SelectItem value="admin">Admin</SelectItem>
                             <SelectItem value="agent">Agent</SelectItem>
-                            <SelectItem value="customer">Customer</SelectItem>
+                            <SelectItem value="customer">Customer (Not recommended)</SelectItem>
                         </SelectContent>
                     </Select>
                 )}
@@ -160,7 +146,7 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
           </div>
           <DialogFooter>
             <Button type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Saving...' : 'Save User'}
+              {isSubmitting ? 'Saving...' : 'Save User Profile'}
             </Button>
           </DialogFooter>
         </form>
@@ -170,11 +156,12 @@ const AddUserDialog = ({ onUserAdded }: { onUserAdded: () => void }) => {
 };
 
 
-const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (id: string, authUid: string) => void }) => {
+const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (id: string, authUid: string | null) => void }) => {
     if (users.length === 0) {
         return (
-            <div className="flex justify-center items-center h-48 border-2 border-dashed rounded-lg">
-                <p className="text-muted-foreground">No users found. Add one to get started.</p>
+            <div className="flex flex-col justify-center items-center h-48 border-2 border-dashed rounded-lg text-center">
+                <p className="text-muted-foreground font-semibold">No users found.</p>
+                <p className="text-muted-foreground text-sm">Add your first user profile to get started.</p>
             </div>
         )
     }
@@ -207,7 +194,7 @@ const UserList = ({ users, onDeleteUser }: { users: User[], onDeleteUser: (id: s
                                         <AlertDialogHeader>
                                             <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                                This action cannot be undone. This will permanently delete the user's account.
+                                                This action will delete the user's profile from your table. You may also need to delete them from the Supabase Auth section.
                                             </AlertDialogDescription>
                                         </AlertDialogHeader>
                                         <AlertDialogFooter>
@@ -246,29 +233,19 @@ export default function UserManagementPage() {
         fetchUsers();
     }, [fetchUsers]);
     
-    const handleDeleteUser = async (id: string, authUid: string) => {
-      // In a real app, you would need an admin client to delete other users.
-      // Supabase client-side can only delete the currently logged in user.
-      // This will likely fail due to permissions unless you have RLS policies that allow it.
-      // For this demo, we assume an admin can delete.
+    const handleDeleteUser = async (id: string, authUid: string | null) => {
       try {
-        // First delete from your public users table
         const { error: dbError } = await supabase.from('users').delete().eq('id', id);
         if (dbError) throw dbError;
         
-        // This part requires admin privileges and won't work from the client by default.
-        // It's here for completeness but will need server-side logic in a real app.
-        // const { error: authError } = await supabase.auth.admin.deleteUser(authUid);
-        // if (authError) throw authError;
-
         toast({
-            title: "User Deleted",
-            description: `User record has been removed from the database.`,
+            title: "User Profile Deleted",
+            description: `User record has been removed. If they are an auth user, you may need to remove them from the Supabase dashboard.`,
         });
-        fetchUsers(); // Refresh the list
+        fetchUsers(); 
       } catch (error: any) {
         console.error("Error deleting user: ", error);
-        toast({ variant: "destructive", title: "Deletion Error", description: error.message || "Failed to delete user. Admin rights may be required." });
+        toast({ variant: "destructive", title: "Deletion Error", description: error.message || "Failed to delete user." });
       }
     };
 
@@ -277,13 +254,24 @@ export default function UserManagementPage() {
             <CardHeader className="flex flex-row items-center justify-between">
                 <div>
                     <CardTitle>User Management</CardTitle>
-                    <CardDescription>Add, view, and remove system users.</CardDescription>
+                    <CardDescription>Add, view, and remove system user profiles.</CardDescription>
                 </div>
                 <AddUserDialog onUserAdded={fetchUsers} />
             </CardHeader>
             <CardContent>
+                 <Alert variant="default" className="mb-6 bg-blue-50 border-blue-200">
+                    <Info className="h-4 w-4 !text-blue-700" />
+                    <AlertTitle className="text-blue-800">Important: Two-Step Process</AlertTitle>
+                    <AlertDescription className="text-blue-700">
+                        <strong>Step 1:</strong> Use the "Add New User" button to create a user profile here.
+                        <br/>
+                        <strong>Step 2:</strong> Go to your <strong>Supabase Dashboard</strong> {'->'} Authentication section and click "Add user" to create a matching login with the same email.
+                    </AlertDescription>
+                </Alert>
                 <UserList users={users} onDeleteUser={handleDeleteUser} />
             </CardContent>
         </Card>
     );
 }
+
+    
